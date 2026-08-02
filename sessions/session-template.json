@@ -1,0 +1,162 @@
+{
+  "session": {
+    "session_id": null,
+    "user_id": null,
+    "story_id": "the-herbalists-choice",
+    "reader_name": "Wren",
+    "status": "active",
+    "turn_count": 0,
+    "started_at": null,
+    "last_action_at": null,
+    "last_llm_output": null,
+    "ending_variant": null
+  },
+
+  "reader": {
+    "name": "Wren",
+    "location": "apothecary",
+    "emotional_state": "content",
+    "inventory": [
+      "basic herb kit"
+    ],
+    "knowledge": [],
+    "skills": [
+      "herbalism: apprentice",
+      "basic_medicine"
+    ],
+    "relationships": {
+      "elara": "mentor, surrogate mother, deep bond",
+      "tomas": "childhood friend, unspoken tension",
+      "halden": "unknown, only rumors",
+      "corwin": "distant authority figure"
+    }
+  },
+
+  "characters": {
+    "elara": {
+      "health": "healthy",
+      "consciousness": "alert",
+      "location": "apothecary",
+      "disposition": "calm",
+      "revealed_secrets": [],
+      "current_activity": "not yet started",
+      "relationship_to_reader": "mentor, surrogate mother, deep bond"
+    },
+    "halden": {
+      "health": "healthy",
+      "consciousness": "alert",
+      "location": "haldens_cottage",
+      "disposition": "hostile",
+      "revealed_secrets": [],
+      "current_activity": "tending her garden",
+      "relationship_to_reader": "stranger"
+    },
+    "tomas": {
+      "health": "healthy",
+      "consciousness": "alert",
+      "location": "village_square",
+      "disposition": "unaware",
+      "revealed_secrets": [],
+      "current_activity": "chopping wood",
+      "relationship_to_reader": "childhood friend, unspoken tension"
+    },
+    "corwin": {
+      "health": "healthy",
+      "consciousness": "alert",
+      "location": "village_square",
+      "disposition": "neutral",
+      "revealed_secrets": [],
+      "current_activity": "posting notices",
+      "relationship_to_reader": "distant authority figure"
+    }
+  },
+
+  "story": {
+    "current_act": 1,
+    "current_scene": "Morning in the Apothecary",
+    "act_progress": "early",
+    "time_in_story": "Day 1, early morning",
+    "time_pressure": "none",
+
+    "plot_beats_hit": [],
+    "plot_beats_available": [
+      "elara_found_sick",
+      "greymere_fever_identified",
+      "discover_moonpetal_cure",
+      "decide_on_path"
+    ],
+    "plot_beats_locked": [
+      "enter_forest",
+      "halden_encounter",
+      "corwin_refusal",
+      "obtain_moonpetal",
+      "elara_recovery",
+      "halden_elara_reunion"
+    ],
+
+    "paths_attempted": [],
+    "paths_completed": [],
+
+    "flags": {
+      "story_started": false,
+      "reader_checked_elara": false,
+      "reader_found_torn_page": false,
+      "reader_left_apothecary": false,
+      "tomas_involved": false,
+      "halden_encountered": false,
+      "corwin_encountered": false,
+      "forest_entered": false,
+      "moonpetal_obtained": false,
+      "elara_delirious": false,
+      "halden_reconciled": false,
+      "corwin_involvement": false
+    }
+  },
+
+  "world": {
+    "locations": {
+      "apothecary": {
+        "status": "open",
+        "notable_changes": "none",
+        "visited": true,
+        "visit_count": 1,
+        "last_visited": "Day 1, early morning"
+      },
+      "village_square": {
+        "status": "busy",
+        "notable_changes": "market day, villagers gossiping about poor harvest",
+        "visited": false,
+        "visit_count": 0,
+        "last_visited": null
+      },
+      "greymere_forest": {
+        "status": "forbidden",
+        "notable_changes": "none",
+        "visited": false,
+        "visit_count": 0,
+        "last_visited": null
+      },
+      "haldens_cottage": {
+        "status": "occupied",
+        "notable_changes": "none",
+        "visited": false,
+        "visit_count": 0,
+        "last_visited": null
+      }
+    },
+
+    "village_awareness": {
+      "elara_illness": "none",
+      "forest_activity": "none"
+    },
+
+    "weather": "overcast, cool autumn morning",
+
+    "ambient_events": [
+      "harvest continues despite poor yield",
+      "villagers are anxious about winter"
+    ]
+  },
+
+  "choice_history": []
+}
