@@ -1,0 +1,203 @@
+{
+  "story_id": "the-herbalists-choice",
+  "title": "The Herbalist's Choice",
+  "description": "A young herbalist's apprentice must find a cure for their dying mentor in a forbidden forest.",
+  "genre": "Low fantasy / village drama",
+  "tone": "warm but tinged with unease",
+  "estimated_play_time": "10-15 minutes",
+
+  "story_file": "stories/the-herbalists-choice.md",
+  "starting_state_file": "sessions/session-template.json",
+
+  "locations": ["apothecary", "village_square", "greymere_forest", "haldens_cottage"],
+
+  "characters": ["elara", "halden", "tomas", "corwin"],
+
+  "flags": {
+    "story_started": false,
+    "reader_checked_elara": false,
+    "reader_found_torn_page": false,
+    "reader_left_apothecary": false,
+    "tomas_involved": false,
+    "halden_encountered": false,
+    "corwin_encountered": false,
+    "forest_entered": false,
+    "moonpetal_obtained": false,
+    "elara_delirious": false,
+    "halden_reconciled": false,
+    "corwin_involvement": false
+  },
+
+  "plot_beats": {
+    "act_1": [
+      "elara_found_sick",
+      "greymere_fever_identified",
+      "discover_moonpetal_cure",
+      "decide_on_path"
+    ],
+    "act_2": [
+      "halden_encounter",
+      "enter_forest",
+      "corwin_refusal",
+      "obtain_moonpetal"
+    ],
+    "act_3": [
+      "elara_recovery",
+      "halden_elara_reunion"
+    ]
+  },
+
+  "paths": {
+    "halden_path": {
+      "beats": ["halden_encounter", "enter_forest", "obtain_moonpetal"],
+      "description": "Reader seeks Halden's help. Halden guides reader into the forest."
+    },
+    "solo_path": {
+      "beats": ["enter_forest", "obtain_moonpetal"],
+      "description": "Reader enters the forest alone, relying on luck and herbal knowledge."
+    },
+    "corwin_path": {
+      "beats": ["corwin_refusal", "enter_forest", "obtain_moonpetal"],
+      "description": "Reader tries Corwin first, gets refused, then finds another way."
+    }
+  },
+
+  "end_conditions": {
+    "all_required": [
+      {"flag": "moonpetal_obtained", "value": true},
+      {"character": "elara", "field": "health", "value": "recovering"},
+      {"flag": "halden_reconciled", "value": true}
+    ]
+  },
+
+  "ending_variants": [
+    {
+      "id": "halden_reconciled",
+      "conditions": [
+        {"flag": "halden_reconciled", "value": true}
+      ],
+      "description": "Halden visits regularly now. The apothecary has three people in it. Elara teaches again. The reader has two mentors."
+    },
+    {
+      "id": "tomas_helped",
+      "conditions": [
+        {"flag": "tomas_involved", "value": true}
+      ],
+      "description": "Tomas and the reader share a quiet moment. Their relationship has deepened. He says something earnest. The reader feels seen."
+    },
+    {
+      "id": "solo_path",
+      "conditions": [
+        {"flag": "halden_encountered", "value": false},
+        {"flag": "tomas_involved", "value": false}
+      ],
+      "description": "The reader sits with Elara as she recovers. She looks at them with new respect. 'You don't need me to watch over you anymore.' The reader feels the bittersweet weight of growing up."
+    },
+    {
+      "id": "corwin_involved",
+      "conditions": [
+        {"flag": "corwin_involvement", "value": true}
+      ],
+      "description": "Corwin visits, grudgingly impressed. The forest ban is quietly relaxed. The village feels less afraid."
+    }
+  ],
+
+  "character_state_progression": {
+    "elara": {
+      "phases": [
+        {
+          "name": "before_encounter",
+          "conditions": {"story.current_act": 1, "story.act_progress": "early"},
+          "state": {"health": "healthy", "consciousness": "alert", "disposition": "calm"}
+        },
+        {
+          "name": "first_encounter",
+          "conditions": {"flag": "reader_checked_elara", "value": true},
+          "state": {"health": "critical_fever", "consciousness": "barely_conscious", "disposition": "delirious"}
+        },
+        {
+          "name": "second_encounter",
+          "conditions": {"story.current_act": 2},
+          "state": {"health": "deteriorating", "consciousness": "fading", "disposition": "delirious"}
+        },
+        {
+          "name": "final_encounter",
+          "conditions": {"flag": "moonpetal_obtained", "value": true},
+          "state": {"health": "recovering", "consciousness": "awake", "disposition": "calm, grateful"}
+        }
+      ]
+    },
+    "halden": {
+      "phases": [
+        {
+          "name": "before_encounter",
+          "conditions": {"flag": "halden_encountered", "value": false},
+          "state": {"disposition": "hostile"}
+        },
+        {
+          "name": "first_encounter",
+          "conditions": {"flag": "halden_encountered", "value": true},
+          "state": {"disposition": "curt, dismissive"}
+        },
+        {
+          "name": "second_encounter",
+          "conditions": {"flag": "forest_entered", "value": true},
+          "state": {"disposition": "grudgingly_helpful"}
+        },
+        {
+          "name": "third_encounter",
+          "conditions": {"flag": "moonpetal_obtained", "value": true},
+          "state": {"disposition": "opening_up, nostalgic"}
+        },
+        {
+          "name": "final_encounter",
+          "conditions": {"flag": "halden_reconciled", "value": true},
+          "state": {"disposition": "vulnerable, emotional"}
+        }
+      ]
+    },
+    "tomas": {
+      "phases": [
+        {
+          "name": "before_encounter",
+          "conditions": {"flag": "tomas_involved", "value": false},
+          "state": {"emotional_state": "unaware"}
+        },
+        {
+          "name": "first_encounter",
+          "conditions": {"flag": "tomas_involved", "value": true},
+          "state": {"emotional_state": "worried, protective"}
+        },
+        {
+          "name": "second_encounter",
+          "conditions": {"flag": "forest_entered", "value": true},
+          "state": {"emotional_state": "brave, earnest"}
+        },
+        {
+          "name": "final_encounter",
+          "conditions": {"flag": "moonpetal_obtained", "value": true},
+          "state": {"emotional_state": "relieved, emotionally open"}
+        }
+      ]
+    },
+    "corwin": {
+      "phases": [
+        {
+          "name": "before_encounter",
+          "conditions": {"flag": "corwin_encountered", "value": false},
+          "state": {"disposition": "neutral"}
+        },
+        {
+          "name": "first_encounter",
+          "conditions": {"flag": "corwin_encountered", "value": true},
+          "state": {"disposition": "refusal, threatening"}
+        },
+        {
+          "name": "final_encounter",
+          "conditions": {"flag": "corwin_involvement", "value": true},
+          "state": {"disposition": "grudgingly impressed"}
+        }
+      ]
+    }
+  }
+}
