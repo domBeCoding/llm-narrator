@@ -1,0 +1,7 @@
+node_modules/
+.env
+sessions/session-*.json
+!sessions/session-template.json
+bot.log
+index.js.bak
+openclaw-workspace-state.json
