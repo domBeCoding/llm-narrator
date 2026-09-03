@@ -1,62 +1,32 @@
-const TOOLS = [
-  {
-    name: 'get_last_narration',
-    description: 'Retrieve the exact last narration output from the current game session. Use this when the reader wants to resume after a healthcheck or distraction, to show them the exact same story text and choices they saw before.',
-    input_schema: {
-      type: 'object',
-      properties: {},
-      required: []
-    }
-  }
-];
+const KimiClient = require('./llm/KimiClient');
 
-const KIMI_ENDPOINT = 'https://api.kimi.com/coding/v1/messages';
-const KIMI_SYSTEM = 'You are the Narrator, a Dungeon Master for interactive storytelling.';
+const NARRATOR_SYSTEM = 'You are the Narrator, a Dungeon Master for interactive storytelling.';
 const REQUEST_TIMEOUT_MS = 60000;
+
+const PROVIDERS = {
+  kimi: KimiClient,
+};
 
 class NarrationService {
   constructor(storyManager, apiKey, options = {}) {
     this.storyManager = storyManager;
-    this.apiKey = apiKey;
     this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+    const provider = options.provider || 'kimi';
+    const ClientClass = PROVIDERS[provider];
+    if (!ClientClass) {
+      throw new Error(`Unknown LLM provider: ${provider}`);
+    }
+    this.llmClient = options.llmClient || new ClientClass(apiKey, { timeoutMs: this.timeoutMs });
   }
 
-  /**
-   * Issues a single request to Kimi, aborting if it exceeds the timeout.
-   */
-  async _request(messages, system, { label }) {
-    let response;
-    try {
-      response = await fetch(KIMI_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': this.apiKey,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model: 'kimi-k2',
-          system: system,
-          messages: messages,
-          tools: TOOLS,
-          temperature: 0.7,
-          max_tokens: 4000
-        }),
-        signal: AbortSignal.timeout(this.timeoutMs)
-      });
-    } catch (error) {
-      if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-        throw new Error(`Kimi API timeout after ${this.timeoutMs}ms (${label})`);
-      }
-      throw error;
-    }
+  get apiKey() {
+    return this.llmClient ? this.llmClient.apiKey : undefined;
+  }
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Kimi API error${label === 'initial' ? '' : ' on tool continuation'}: ${response.status} - ${error}`);
+  set apiKey(value) {
+    if (this.llmClient) {
+      this.llmClient.apiKey = value;
     }
-
-    return response.json();
   }
 
   buildPrompt(session, userAction) {
@@ -69,7 +39,7 @@ class NarrationService {
       concludingDirective = '\n\n---\n\n' + template;
     }
 
-    const systemContext = `${KIMI_SYSTEM}\n\n${this.storyManager.getSystemPrompt()}\n\n---\n\n## Story Context\n\n${story.content}\n\n---\n\n## Story Config (Mechanical Rules)\n\n\`\`\`json\n${JSON.stringify(story.config, null, 2)}\n\`\`\``;
+    const systemContext = `${NARRATOR_SYSTEM}\n\n${this.storyManager.getSystemPrompt()}\n\n---\n\n## Story Context\n\n${story.content}\n\n---\n\n## Story Config (Mechanical Rules)\n\n\`\`\`json\n${JSON.stringify(story.config, null, 2)}\n\`\`\``;
 
     const userMessage = `## Current Session State\n\n\`\`\`json\n${stateSummary}\n\`\`\`\n\n---\n\n## Reader's Action\n\n${userAction}${concludingDirective}\n\n---\n\nGenerate the narration response following the format specified in the system prompt. Include the story, divider, summary prompt, and choices. After the narration, include a JSON block with state updates.`;
 
@@ -92,65 +62,8 @@ class NarrationService {
     });
   }
 
-  async callKimi(prompt, session) {
-    const { systemContext, userMessage } = prompt;
-    const history = session.conversation_history || [];
-    const messages = [
-      ...history.map(entry => ({ role: entry.role, content: entry.content })),
-      { role: 'user', content: userMessage }
-    ];
-
-    let data = await this._request(messages, systemContext, { label: 'initial' });
-    console.log('[DEBUG] Kimi response received, stop_reason:', data.stop_reason);
-
-    // Handle tool calls
-    while (data.stop_reason === 'tool_use') {
-      const toolUseBlock = data.content.find(block => block.type === 'tool_use');
-
-      if (!toolUseBlock) {
-        console.error('[ERROR] Tool use indicated but no tool_use block found');
-        break;
-      }
-
-      console.log(`[DEBUG] Tool call: ${toolUseBlock.name}`, toolUseBlock.input);
-
-      let toolResult;
-      if (toolUseBlock.name === 'get_last_narration') {
-        toolResult = session.session.last_llm_output || 'No previous narration found.';
-        console.log('[DEBUG] Returning last narration, length:', toolResult.length);
-      } else {
-        toolResult = `Unknown tool: ${toolUseBlock.name}`;
-      }
-
-      messages.push({
-        role: 'assistant',
-        content: data.content
-      });
-
-      messages.push({
-        role: 'user',
-        content: [
-          {
-            type: 'tool_result',
-            tool_use_id: toolUseBlock.id,
-            content: toolResult
-          }
-        ]
-      });
-
-      data = await this._request(messages, systemContext, { label: 'tool continuation' });
-      console.log('[DEBUG] Kimi continuation response, stop_reason:', data.stop_reason);
-    }
-
-    if (data.content && Array.isArray(data.content) && data.content.length > 0) {
-      const textBlock = data.content.find(block => block.type === 'text');
-      if (textBlock) {
-        return textBlock.text;
-      }
-    }
-
-    console.error('[ERROR] No text block in Kimi response');
-    throw new Error('No text response from Kimi');
+  async callLLM(prompt, session) {
+    return this.llmClient.call(prompt, session);
   }
 
   parseResponse(response) {

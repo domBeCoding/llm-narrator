@@ -2,8 +2,9 @@ const { Client, GatewayIntentBits, Events, REST, Routes, SlashCommandBuilder, Em
 const { isGibberish } = require('./utils');
 
 class Bot {
-  constructor({ secretsManager, storyManager, sessionManager, narrationService, discordUI }) {
+  constructor({ secretsManager, storyManager, sessionManager, narrationService, discordUI, llmCredentialsSecret }) {
     this.secretsManager = secretsManager;
+    this.llmCredentialsSecret = llmCredentialsSecret;
     this.storyManager = storyManager;
     this.sessionManager = sessionManager;
     this.narrationService = narrationService;
@@ -59,8 +60,8 @@ class Bot {
     try {
       console.log('Loading secrets from SSM...');
       this.discordToken = await this.secretsManager.getSecret('narrator-bot');
-      const kimiApiKey = await this.secretsManager.getSecret('kimi-credentials');
-      this.narrationService.apiKey = kimiApiKey;
+      const llmApiKey = await this.secretsManager.getSecret(this.llmCredentialsSecret);
+      this.narrationService.apiKey = llmApiKey;
 
       console.log('Loading story data...');
       await this.storyManager.loadStoryData();
@@ -209,7 +210,7 @@ class Bot {
         const openingAction = story.openingAction
           || 'This is the opening turn. Set the scene where the story begins, introduce the reader to their surroundings, and establish the situation that sets the story in motion.';
         const prompt = this.narrationService.buildPrompt(session, openingAction);
-        const response = await this.narrationService.callKimi(prompt, session);
+        const response = await this.narrationService.callLLM(prompt, session);
         const { narration, stateUpdate } = this.narrationService.parseResponse(response);
 
         this.narrationService.applyStateUpdates(session, stateUpdate, narration, openingAction);
@@ -322,9 +323,9 @@ class Bot {
 
       console.log('[DEBUG] Building prompt...');
       const prompt = this.narrationService.buildPrompt(session, userAction);
-      console.log('[DEBUG] Calling Kimi API...');
-      const response = await this.narrationService.callKimi(prompt, session);
-      console.log('[DEBUG] Kimi response received');
+      console.log('[DEBUG] Calling LLM API...');
+      const response = await this.narrationService.callLLM(prompt, session);
+      console.log('[DEBUG] LLM response received');
 
       const { narration, stateUpdate } = this.narrationService.parseResponse(response);
       console.log('[DEBUG] Narration length:', narration.length);

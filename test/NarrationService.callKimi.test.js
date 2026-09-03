@@ -42,24 +42,24 @@ function stubFetch(t, responses) {
   return bodies;
 }
 
-test('callKimi: returns the text block on a normal completion', async (t) => {
+test('callLLM: returns the text block on a normal completion', async (t) => {
   stubFetch(t, [
     { json: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'You wake up.' }] } },
   ]);
 
   const svc = new NarrationService(storyManagerStub, 'test-key');
-  const result = await svc.callKimi(makePrompt('PROMPT'), sessionWithLastOutput(null));
+  const result = await svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null));
 
   assert.strictEqual(result, 'You wake up.');
 });
 
-test('callKimi: sends the api key, model, tools and prompt', async (t) => {
+test('callLLM: sends the api key, model, tools and prompt', async (t) => {
   const bodies = stubFetch(t, [
     { json: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] } },
   ]);
 
   const svc = new NarrationService(storyManagerStub, 'test-key');
-  await svc.callKimi(makePrompt('MY PROMPT'), sessionWithLastOutput(null));
+  await svc.callLLM(makePrompt('MY PROMPT'), sessionWithLastOutput(null));
 
   assert.strictEqual(bodies[0].model, 'kimi-k2');
   assert.strictEqual(bodies[0].messages[0].content, 'MY PROMPT');
@@ -67,29 +67,29 @@ test('callKimi: sends the api key, model, tools and prompt', async (t) => {
   assert.strictEqual(bodies[0].tools[0].name, 'get_last_narration');
 });
 
-test('callKimi: throws with the status code when the API returns an error', async (t) => {
+test('callLLM: throws with the status code when the API returns an error', async (t) => {
   stubFetch(t, [{ ok: false, status: 500, text: 'internal boom' }]);
 
   const svc = new NarrationService(storyManagerStub, 'test-key');
 
   await assert.rejects(
-    () => svc.callKimi(makePrompt('PROMPT'), sessionWithLastOutput(null)),
+    () => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null)),
     /Kimi API error: 500 - internal boom/
   );
 });
 
-test('callKimi: throws when the response carries no text block', async (t) => {
+test('callLLM: throws when the response carries no text block', async (t) => {
   stubFetch(t, [{ json: { stop_reason: 'end_turn', content: [] } }]);
 
   const svc = new NarrationService(storyManagerStub, 'test-key');
 
   await assert.rejects(
-    () => svc.callKimi(makePrompt('PROMPT'), sessionWithLastOutput(null)),
+    () => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null)),
     /No text response from Kimi/
   );
 });
 
-test('callKimi: resolves get_last_narration and continues the conversation', async (t) => {
+test('callLLM: resolves get_last_narration and continues the conversation', async (t) => {
   const bodies = stubFetch(t, [
     {
       json: {
@@ -101,7 +101,7 @@ test('callKimi: resolves get_last_narration and continues the conversation', asy
   ]);
 
   const svc = new NarrationService(storyManagerStub, 'test-key');
-  const result = await svc.callKimi(makePrompt('PROMPT'), sessionWithLastOutput('THE PREVIOUS SCENE'));
+  const result = await svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput('THE PREVIOUS SCENE'));
 
   assert.strictEqual(result, 'Here it is again.');
   assert.strictEqual(bodies.length, 2);
@@ -112,7 +112,7 @@ test('callKimi: resolves get_last_narration and continues the conversation', asy
   assert.strictEqual(toolResult.content, 'THE PREVIOUS SCENE');
 });
 
-test('callKimi: falls back gracefully when there is no previous narration', async (t) => {
+test('callLLM: falls back gracefully when there is no previous narration', async (t) => {
   const bodies = stubFetch(t, [
     {
       json: {
@@ -124,7 +124,7 @@ test('callKimi: falls back gracefully when there is no previous narration', asyn
   ]);
 
   const svc = new NarrationService(storyManagerStub, 'test-key');
-  await svc.callKimi(makePrompt('PROMPT'), sessionWithLastOutput(null));
+  await svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null));
 
   assert.strictEqual(
     bodies[1].messages.at(-1).content[0].content,
@@ -132,7 +132,7 @@ test('callKimi: falls back gracefully when there is no previous narration', asyn
   );
 });
 
-test('callKimi: reports unknown tool names back to the model', async (t) => {
+test('callLLM: reports unknown tool names back to the model', async (t) => {
   const bodies = stubFetch(t, [
     {
       json: {
@@ -144,23 +144,23 @@ test('callKimi: reports unknown tool names back to the model', async (t) => {
   ]);
 
   const svc = new NarrationService(storyManagerStub, 'test-key');
-  await svc.callKimi(makePrompt('PROMPT'), sessionWithLastOutput(null));
+  await svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null));
 
   assert.match(bodies[1].messages.at(-1).content[0].content, /Unknown tool: delete_everything/);
 });
 
-test('callKimi: breaks out if tool_use is signalled with no tool_use block', async (t) => {
+test('callLLM: breaks out if tool_use is signalled with no tool_use block', async (t) => {
   stubFetch(t, [
     { json: { stop_reason: 'tool_use', content: [{ type: 'text', text: 'orphan text' }] } },
   ]);
 
   const svc = new NarrationService(storyManagerStub, 'test-key');
-  const result = await svc.callKimi(makePrompt('PROMPT'), sessionWithLastOutput(null));
+  const result = await svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null));
 
   assert.strictEqual(result, 'orphan text');
 });
 
-test('callKimi: throws if a tool continuation call fails', async (t) => {
+test('callLLM: throws if a tool continuation call fails', async (t) => {
   stubFetch(t, [
     {
       json: {
@@ -174,12 +174,12 @@ test('callKimi: throws if a tool continuation call fails', async (t) => {
   const svc = new NarrationService(storyManagerStub, 'test-key');
 
   await assert.rejects(
-    () => svc.callKimi(makePrompt('PROMPT'), sessionWithLastOutput('x')),
+    () => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput('x')),
     /Kimi API error on tool continuation: 429 - rate limited/
   );
 });
 
-test('callKimi: prepends conversation history as alternating messages', async (t) => {
+test('callLLM: prepends conversation history as alternating messages', async (t) => {
   const bodies = stubFetch(t, [
     { json: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] } },
   ]);
@@ -192,7 +192,7 @@ test('callKimi: prepends conversation history as alternating messages', async (t
       { role: 'assistant', content: 'She looks pale.' },
     ],
   };
-  await svc.callKimi(makePrompt('CURRENT PROMPT'), session);
+  await svc.callLLM(makePrompt('CURRENT PROMPT'), session);
 
   const msgs = bodies[0].messages;
   assert.strictEqual(msgs.length, 3);
@@ -204,7 +204,7 @@ test('callKimi: prepends conversation history as alternating messages', async (t
   assert.strictEqual(msgs[2].content, 'CURRENT PROMPT');
 });
 
-test('callKimi: sends only the prompt when conversation_history is empty', async (t) => {
+test('callLLM: sends only the prompt when conversation_history is empty', async (t) => {
   const bodies = stubFetch(t, [
     { json: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] } },
   ]);
@@ -214,20 +214,20 @@ test('callKimi: sends only the prompt when conversation_history is empty', async
     session: { story_id: 's', last_llm_output: null },
     conversation_history: [],
   };
-  await svc.callKimi(makePrompt('PROMPT'), session);
+  await svc.callLLM(makePrompt('PROMPT'), session);
 
   assert.strictEqual(bodies[0].messages.length, 1);
   assert.strictEqual(bodies[0].messages[0].content, 'PROMPT');
 });
 
-test('callKimi: handles missing conversation_history gracefully', async (t) => {
+test('callLLM: handles missing conversation_history gracefully', async (t) => {
   const bodies = stubFetch(t, [
     { json: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] } },
   ]);
 
   const svc = new NarrationService(storyManagerStub, 'test-key');
   const session = { session: { story_id: 's', last_llm_output: null } };
-  await svc.callKimi(makePrompt('PROMPT'), session);
+  await svc.callLLM(makePrompt('PROMPT'), session);
 
   assert.strictEqual(bodies[0].messages.length, 1);
   assert.strictEqual(bodies[0].messages[0].content, 'PROMPT');
@@ -256,22 +256,22 @@ test('BUG: the tool_use loop has no iteration cap', { skip: 'would loop forever 
   t.after(() => { global.fetch = original; });
 
   const svc = new NarrationService(storyManagerStub, 'test-key');
-  await assert.rejects(() => svc.callKimi(makePrompt('PROMPT'), sessionWithLastOutput('x')), /too many tool/i);
+  await assert.rejects(() => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput('x')), /too many tool/i);
 });
 
 // --- Timeout behaviour -------------------------------------------------------
 
-test('callKimi: defaults to a 60 second timeout', () => {
+test('callLLM: defaults to a 60 second timeout', () => {
   const svc = new NarrationService(storyManagerStub, 'test-key');
   assert.strictEqual(svc.timeoutMs, 60000);
 });
 
-test('callKimi: timeout is configurable', () => {
+test('callLLM: timeout is configurable', () => {
   const svc = new NarrationService(storyManagerStub, 'test-key', { timeoutMs: 5000 });
   assert.strictEqual(svc.timeoutMs, 5000);
 });
 
-test('callKimi: passes an abort signal to fetch', async (t) => {
+test('callLLM: passes an abort signal to fetch', async (t) => {
   const original = global.fetch;
   let signal;
   global.fetch = async (url, opts) => {
@@ -286,12 +286,12 @@ test('callKimi: passes an abort signal to fetch', async (t) => {
   t.after(() => { global.fetch = original; });
 
   const svc = new NarrationService(storyManagerStub, 'test-key');
-  await svc.callKimi(makePrompt('PROMPT'), sessionWithLastOutput(null));
+  await svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null));
 
   assert.ok(signal instanceof AbortSignal, 'an AbortSignal should be supplied');
 });
 
-test('callKimi: aborts a hung request and reports a timeout', async (t) => {
+test('callLLM: aborts a hung request and reports a timeout', async (t) => {
   const original = global.fetch;
   // Honour the abort signal the way undici does.
   global.fetch = (url, opts) => new Promise((_resolve, reject) => {
@@ -306,12 +306,12 @@ test('callKimi: aborts a hung request and reports a timeout', async (t) => {
   const svc = new NarrationService(storyManagerStub, 'test-key', { timeoutMs: 50 });
 
   await assert.rejects(
-    () => svc.callKimi(makePrompt('PROMPT'), sessionWithLastOutput(null)),
+    () => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null)),
     /Kimi API timeout after 50ms \(initial\)/
   );
 });
 
-test('callKimi: reports a timeout during a tool continuation', async (t) => {
+test('callLLM: reports a timeout during a tool continuation', async (t) => {
   const original = global.fetch;
   let call = 0;
   global.fetch = (url, opts) => {
@@ -340,17 +340,17 @@ test('callKimi: reports a timeout during a tool continuation', async (t) => {
   const svc = new NarrationService(storyManagerStub, 'test-key', { timeoutMs: 50 });
 
   await assert.rejects(
-    () => svc.callKimi(makePrompt('PROMPT'), sessionWithLastOutput('x')),
+    () => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput('x')),
     /Kimi API timeout after 50ms \(tool continuation\)/
   );
 });
 
-test('callKimi: propagates non-abort network errors unchanged', async (t) => {
+test('callLLM: propagates non-abort network errors unchanged', async (t) => {
   const original = global.fetch;
   global.fetch = async () => { throw new Error('ECONNREFUSED'); };
   t.after(() => { global.fetch = original; });
 
   const svc = new NarrationService(storyManagerStub, 'test-key');
 
-  await assert.rejects(() => svc.callKimi(makePrompt('PROMPT'), sessionWithLastOutput(null)), /ECONNREFUSED/);
+  await assert.rejects(() => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null)), /ECONNREFUSED/);
 });
