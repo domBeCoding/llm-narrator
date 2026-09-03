@@ -220,54 +220,80 @@ session:
   user_id: "user-001"
   story_id: "the-herbalists-choice"
   reader_name: "Wren"
-  status: "active" # active | paused | completed
+  status: "active" # active | concluding | completed
   turn_count: 3
   started_at: "2026-07-25T12:00:00Z"
   last_action_at: "2026-07-25T12:15:00Z"
   last_llm_output: null # full verbatim narration from the last turn
   ending_variant: null # null | halden_reconciled | tomas_helped | solo_path | corwin_involved
+
+conversation_history: [] # array of {role, content} pairs — reader actions and LLM narrations
 ```
 
 ---
 
 ## How State Flows Each Turn
 
-### Prototype Mode (Current)
+### Current Turn Cycle
 
-In the current prototype, Windsurf (Cascade) acts as both the LLM narrator and the state management system. There is no separate application code.
+The application layer (the Discord bot) owns state; the LLM only narrates and reports changes.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  PROTOTYPE TURN CYCLE                                   │
+│  TURN CYCLE                                             │
 │                                                         │
 │  1. Reader submits action                               │
 │                                                         │
-│  2. Windsurf reads session state file (session-XXX.json)│
+│  2. Bot loads the session state file                    │
 │                                                         │
-│  3. Windsurf reads story file (story.md) for context    │
-│  3b. Windsurf reads story config (story-config.json)    │
-│     for end conditions, flags, ending variants          │
+│  3. Bot builds the prompt:                              │
+│     - System prompt (role, rules)                       │
+│     - Current session state                             │
+│     - Story context (story.md)                          │
+│     - Story config (flags, end conditions, variants)    │
+│     - Reader's action for this turn                     │
 │                                                         │
-│  4. Windsurf generates narration (DM-style prose +      │
-│     summary prompt + numbered choices)                  │
+│  4. LLM returns narration + a fenced JSON state block   │
 │                                                         │
-│  5. Windsurf directly edits the session state file,     │
-│     applying all state changes from this turn             │
+│  5. Bot parses the narration and the state block         │
 │                                                         │
-│  6. Windsurf confirms state update to reader            │
-│     (e.g., "[State updated]")                           │
+│  6. Bot applies the state changes and records            │
+│     turn_count, last_action_at and last_llm_output       │
 │                                                         │
-│  7. Repeat                                              │
+│  7. Bot saves the session file                          │
+│                                                         │
+│  8. Bot sends the narration to the reader               │
+│                                                         │
+│  9. Repeat                                              │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Production Mode (Future)
+### Session Status Lifecycle
 
-In a production system, the narration engine and state management would be separated:
+The session `status` field transitions through three states, managed entirely by the application:
+
+| Status | Meaning | Who sets it | Reader experience |
+|---|---|---|---|
+| `active` | Story in progress | Set at session creation | Normal turns with choices |
+| `concluding` | All end conditions met; next turn is the ending | Set by bot after `evaluateEndConditions` passes | One more action, then the closing scene |
+| `completed` | Story is over; further play is blocked | Set by bot after the concluding turn | "Use `/restart` to play again" |
+
+**How the transition works:**
+
+1. After every turn, the bot calls `evaluateEndConditions(session, config)` which checks all `end_conditions.all_required` predicates against the current state.
+2. If all pass and the session is `active`, the bot sets `status = 'concluding'`.
+3. On the next turn, the bot sees `status === 'concluding'` and injects a **FINAL TURN — ENDING DIRECTIVE** into the LLM prompt. The directive tells the LLM to infer the appropriate ending from the current game state flags and the `ending_variants` descriptions in the story config.
+4. After the concluding turn, the bot sets `status = 'completed'`. Further messages are rejected.
+
+The LLM never sets `status` — that is a deterministic application-level decision. The LLM infers which ending variant fits based on the flags and character state visible in the prompt.
+
+### Target Turn Cycle (with validation)
+
+Validation of the model's proposed changes is not yet implemented. The intended shape:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  PRODUCTION TURN CYCLE                                  │
+│  VALIDATED TURN CYCLE                                   │
 │                                                         │
 │  1. Reader submits action                               │
 │                                                         │
@@ -308,13 +334,7 @@ In a production system, the narration engine and state management would be separ
 
 ## How State Changes Are Applied
 
-### Prototype Mode (Current)
-
-In the current prototype, Windsurf directly edits the session state file after each turn. There is no separate state update block — Windsurf reads the session JSON, narrates the response, then uses file editing tools to update the session file with any state changes. See the system prompt's "State Update (Prototype Mode)" section for details.
-
-### Production Mode (Future)
-
-In a production system, the LLM would output **two parts** in each response:
+The LLM outputs **two parts** in each response:
 
 #### Part 1: Narration (what the reader sees)
 

@@ -144,20 +144,15 @@ The story config file contains an `end_conditions` block with a list of conditio
 - Flags (e.g., `{"flag": "moonpetal_obtained", "value": true}`)
 - Character state (e.g., `{"character": "elara", "field": "health", "value": "recovering"}`)
 
-Check these conditions against the current session state each turn. When **all** conditions are met, the story has reached its ending. Do not continue generating new dilemmas or plot threads. Begin winding toward closure.
+Check these conditions against the current session state each turn. The application also checks them programmatically after every turn. When **all** conditions are met, the application transitions the session to `"concluding"` status and matches ending variants.
 
-**Winding down (1-2 turns before the ending):**
+**The concluding turn:**
 
-When end conditions are met, shift the narration toward resolution:
+When the session status is `"concluding"`, the application injects a **FINAL TURN — ENDING DIRECTIVE** into your prompt. This tells you which ending variant(s) matched so you can weave them into the closing scene. On this turn you must:
 
-- No new conflicts, no new mysteries, no new urgency
-- Let the characters have quiet moments — conversations, reflections, the morning after
-- Mirror the opening scene to give a sense of bookending and transformation
-- The world feels calmer, lighter
+**The ending turn format:**
 
-**The ending turn:**
-
-The final turn has a modified format:
+The concluding turn has a modified format:
 
 ```
 <Story — the closing scene, quiet and transformative>
@@ -173,6 +168,7 @@ The End
 - No numbered choices
 - No custom action prompt
 - End with "The End" on its own line after the closing line
+- Do **not** set `session.status` or `session.ending_variant` in your state update block — the application handles those
 
 **Ending variants:**
 
@@ -184,41 +180,32 @@ The story config file contains an `ending_variants` array. Each variant has:
 
 Select the variant (or combination of variants) that best matches the reader's journey based on the current session state. If multiple variants' conditions are met, weave elements from each into the closing scene.
 
-**State updates on the ending turn:**
+**State updates on the concluding turn:**
 
-- `session.status`: set to `"completed"`
-- `session.ending_variant`: set to the variant id (or combined ids, e.g., `"halden_reconciled"`, `"halden_and_tomas"`)
-- `story.act_progress`: set to `"complete"`
+- `session.status` and `session.ending_variant` are set by the application, not by you. Do not include them in your state update block.
 - All other state updates proceed as normal for the final turn
 
-### State Update (Prototype Mode)
+### State Update
 
-In the current prototype stage, the narration runtime is executed directly by Windsurf (Cascade). There is no separate application code yet. Windsurf acts as both the LLM narrator and the state management system.
+The application layer assembles your prompt, sends it to you, parses your response, and writes the result back to the session file. You are responsible for the narration and for reporting what changed; the application is responsible for persistence.
 
-**Session files:**
+**What the application supplies in your prompt each turn:**
 
-- `sessions/session-001.json` — the active session file. Read from and write to this file each turn.
-- `sessions/session-template.json` — the starting state for a new playthrough of this story (turn 0). **Do not use this file for narration.** It exists only as a reference for what a fresh session looks like. To start a new playthrough, copy this file to a new session file and fill in the session ID and user ID. Never read from it during an active playthrough, never write to it.
+- **Current session state** — the live session JSON for this playthrough. Treat it as the single source of truth for what has happened so far.
+- **Story context** — the story narrative: world, characters, acts, author notes. Use it for narration detail.
+- **Story config** — the rulebook: flags, plot beats, paths, end conditions, ending variants. Use it to check end conditions and select ending variants. It is reference data only; never attempt to change it.
 
-**Story files:**
+You do not read or write files. Everything you need is in the prompt, and everything you change is reported in your state update block.
 
-- `stories/the-herbalists-choice.md` — the story narrative: world, characters, acts, author notes. Read for narration context.
-- `stories/the-herbalists-choice-config.json` — the story config (rulebook): flags, plot beats, paths, end conditions, ending variants. Read each turn to check end conditions and select ending variants. **This file is read-only. Never write to it during a session.**
+**Each turn:**
 
-**Each turn, Windsurf must:**
+1. The application supplies the current session state, the story file, and the story config in your prompt.
+2. Check the story config's end conditions against the supplied state to decide whether the story should wind down.
+3. **Narrate** the response to the reader's action (DM-style prose + numbered action suggestions).
+4. **Report state changes** by appending a single fenced `json` block after the narration, containing only the fields that changed this turn. The application parses this block and applies it.
 
-1. **Read** the session state file (`sessions/session-001.json`) to get the current state
-2. **Read** the story file (`stories/the-herbalists-choice.md`) for the current act's world data, character definitions, and available actions
-3. **Read** the story config file (`stories/the-herbalists-choice-config.json`) for end conditions, flag definitions, and ending variants. Check whether end conditions are met.
-4. **Narrate** the response to the reader's action (DM-style prose + numbered action suggestions)
-5. **Update** the session state file directly using file editing tools, applying all state changes that resulted from the reader's action this turn
-6. **Confirm** to the reader that state has been updated (a brief note after the narration, e.g., "[State updated]")
+**What to report in the state update block each turn:**
 
-**What to update in the session file each turn:**
-
-- `session.turn_count`: increment by 1
-- `session.last_action_at`: set to current real timestamp
-- `session.last_llm_output`: set to the **complete, word-for-word narration** you just produced, including the action prompt and numbered options. Do not summarize, condense, or paraphrase. Store the full text exactly as the reader saw it (excluding the "[State updated]" confirmation).
 - `reader`: update location, emotional_state, inventory, knowledge, or relationships if they changed
 - `characters`: update any NPC whose health, consciousness, disposition, revealed_secrets, current_activity, or relationship_to_reader changed this turn
 - `story`: update current_act, current_scene, act_progress if the story advanced. Add to plot_beats_hit if a beat was triggered. Set flags to true if their corresponding event occurred.

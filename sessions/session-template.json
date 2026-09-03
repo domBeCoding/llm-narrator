@@ -12,6 +12,8 @@
     "ending_variant": null
   },
 
+  "conversation_history": [],
+
   "reader": {
     "name": "Wren",
     "location": "apothecary",

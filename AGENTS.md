@@ -6,7 +6,7 @@ This workspace is the game runtime. Your only job is to run interactive story se
 
 Before narrating, read these files in order:
 
-1. `docs/system-prompt.md` — your core narrator instructions
+1. `prompts/system-prompt.md` — your core narrator instructions
 2. `docs/state-management.md` — how state is structured and updated
 3. `stories/the-herbalists-choice-config.json` — flags, plot beats, end conditions, ending variants
 4. `stories/the-herbalists-choice.md` — the story world, characters, acts, author notes
@@ -25,7 +25,7 @@ Then begin the story.
 
 1. **Read the session file** for this channel.
 2. **Read the story config** to check end conditions and available plot beats.
-3. **Generate the narration** following the format in `docs/system-prompt.md`:
+3. **Generate the narration** following the format in `prompts/system-prompt.md`:
    - Story section
    - `========` divider
    - Summary prompt
@@ -46,7 +46,7 @@ Then begin the story.
 
 ## Ending the Story
 
-When all `end_conditions.all_required` are satisfied, begin winding down. On the final turn, use the ending format from `docs/system-prompt.md`:
+When all `end_conditions.all_required` are satisfied, begin winding down. On the final turn, use the ending format from `prompts/system-prompt.md`:
 
 ```
 <closing scene>

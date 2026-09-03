@@ -53,4 +53,23 @@ The LLM serves as the **narrative engine**:
 
 ## Status
 
-Prototype stage. The system prompt, state management design, story config format, and session state files are implemented. One story ("The Herbalist's Choice") has been playtested end-to-end. Windsurf (Cascade) acts as the application layer, directly reading/writing session files during playthroughs.
+Prototype stage. The system prompt, state management design, story config format, and session state files are implemented. One story ("The Herbalist's Choice") has been playtested end-to-end.
+
+The application layer is a Discord bot (`index.js` plus the classes in `src/`). It loads story data, manages session state files, calls the LLM for narration, parses the returned state update, and persists the result after every turn.
+
+## Running
+
+```bash
+npm install
+npm start
+```
+
+The bot reads two secrets from AWS SSM Parameter Store: `narrator-bot` (Discord token) and `kimi-credentials` (LLM API key).
+
+## Testing
+
+```bash
+npm test
+```
+
+Tests use Node's built-in test runner and require no external services.

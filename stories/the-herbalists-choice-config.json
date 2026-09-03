@@ -9,6 +9,8 @@
   "story_file": "stories/the-herbalists-choice.md",
   "starting_state_file": "sessions/session-template.json",
 
+  "opening_action": "You wake in the apothecary to the sound of coughing. Master Elara is still in her cot — she should have been up an hour ago. The morning light filters through the dried herbs hanging from the rafters. Something is wrong.",
+
   "locations": ["apothecary", "village_square", "greymere_forest", "haldens_cottage"],
 
   "characters": ["elara", "halden", "tomas", "corwin"],
