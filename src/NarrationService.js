@@ -186,6 +186,24 @@ class NarrationService {
       session.conversation_history.push({ role: 'assistant', content: narration });
     }
 
+    session.choice_history = session.choice_history || [];
+    const choiceData = stateUpdate && (stateUpdate.choice_log || stateUpdate.choice_history);
+    if (choiceData) {
+      const entries = Array.isArray(choiceData) ? choiceData : [choiceData];
+      for (const entry of entries) {
+        session.choice_history.push({
+          turn: session.session.turn_count,
+          ...entry
+        });
+      }
+    } else if (userAction && session.session.turn_count > 1) {
+      session.choice_history.push({
+        turn: session.session.turn_count,
+        action: userAction,
+        consequence: 'State advanced without structured choice details.'
+      });
+    }
+
     if (!stateUpdate) return;
 
     if (stateUpdate.characters) {
@@ -225,12 +243,6 @@ class NarrationService {
       }
     }
 
-    if (stateUpdate.choice_log) {
-      session.choice_history.push({
-        turn: session.session.turn_count,
-        ...stateUpdate.choice_log
-      });
-    }
   }
 }
 
