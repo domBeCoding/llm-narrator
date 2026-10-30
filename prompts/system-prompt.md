@@ -193,7 +193,7 @@ The application layer assembles your prompt, sends it to you, parses your respon
 
 - **Current session state** — the live session JSON for this playthrough. Treat it as the single source of truth for what has happened so far.
 - **Story context** — the story narrative: world, characters, acts, author notes. Use it for narration detail.
-- **Story config** — the rulebook: flags, plot beats, paths, end conditions, ending variants. Use it to check end conditions and select ending variants. It is reference data only; never attempt to change it.
+- **Story config** — the rulebook: flags, plot beats, paths, end conditions, ending variants, and `state_rules` (the fixed values you must use in your state update block). Use it to check end conditions and select ending variants. It is reference data only; never attempt to change it.
 
 You do not read or write files. Everything you need is in the prompt, and everything you change is reported in your state update block.
 
@@ -202,26 +202,80 @@ You do not read or write files. Everything you need is in the prompt, and everyt
 1. The application supplies the current session state, the story file, and the story config in your prompt.
 2. Check the story config's end conditions against the supplied state to decide whether the story should wind down.
 3. **Narrate** the response to the reader's action (DM-style prose + numbered action suggestions).
-4. **Report state changes** by appending a single fenced `json` block after the narration, containing only the fields that changed this turn. The application parses this block and applies it.
+4. **Report state changes** by appending a single fenced `json` block after the narration, containing only the fields that changed this turn. The application parses this block, checks every change against the story config, and saves only the changes that pass.
 
-**What to report in the state update block each turn:**
+**The state update block: exact format**
 
-- `reader`: update location, emotional_state, inventory, knowledge, or relationships if they changed
-- `characters`: update any NPC whose health, consciousness, disposition, revealed_secrets, current_activity, or relationship_to_reader changed this turn
-- `story`: update current_act, current_scene, act_progress if the story advanced. Add to plot_beats_hit if a beat was triggered. Set flags to true if their corresponding event occurred.
-- `world.locations`: if the reader traveled to a location, set `visited: true`, increment `visit_count`, and set `last_visited` to the current story time. Update `notable_changes` if something changed at a location.
-- `world.village_awareness`: update if the village's awareness of events changed
-- `choice_history`: append a new entry with the reader's action, the consequence, and key state changes
+Put the block at the very end of your response, after the choices. Open it with a line that is exactly three backticks followed by `json`, and close it with a line that is exactly three backticks, as in the example below. Put the sections at the **top level** of the JSON object. Do not wrap them in another key such as `state_update`. Include only the sections and fields that changed. Here is a complete example for a turn where the reader checks on Elara:
+
+```json
+{
+  "reader": {
+    "emotional_state": "alarmed",
+    "knowledge": ["elara_is_sick"]
+  },
+  "characters": {
+    "elara": {
+      "health": "critical_fever",
+      "consciousness": "barely_conscious",
+      "disposition": "delirious"
+    }
+  },
+  "story": {
+    "current_scene": "Elara's Sickbed",
+    "plot_beats_hit": ["elara_found_sick"],
+    "flags": {
+      "reader_checked_elara": true
+    }
+  },
+  "world": {
+    "village_awareness": {
+      "elara_illness": "low"
+    }
+  },
+  "choice_history": {
+    "action": "check on Elara",
+    "consequence": "found her feverish and barely conscious",
+    "key_state_changes": ["elara.health=critical_fever", "flag reader_checked_elara=true"]
+  }
+}
+```
+
+If nothing changed apart from the choice, send only the `choice_history` entry. On a clarification or healthcheck reply (see Error Handling), send no block at all.
+
+**What you may report in the state update block:**
+
+- `reader`: `location`, `emotional_state`, `inventory`, `knowledge`, `skills`, `relationships`. For `inventory` and `skills` send the full new list. For `knowledge` send the new items; the application keeps everything already known.
+- `characters`: for any character already in the session state, `health`, `consciousness`, `location`, `disposition`, `revealed_secrets`, `current_activity`, `relationship_to_reader`. For `revealed_secrets` send the new secrets; revealed secrets are never removed.
+- `story`: `current_act`, `current_scene`, `act_progress`, `plot_beats_hit` (the beats triggered this turn), `flags` (flags that became true this turn).
+- `world.locations`: if the reader travelled to a location, set `visited: true`, increment `visit_count`, and set `last_visited` to the current story time. Update `status` or `notable_changes` if something changed at a location.
+- `world.village_awareness`: update if the village's awareness of events changed.
+- `choice_history`: one entry (or a list of entries) with `action`, `consequence`, and optionally `key_state_changes` (a list of short text notes). The application adds the turn number.
+
+Anything else (for example `session`, `conversation_history`, `plot_beats_available`, `weather`) is owned by the application and will be ignored.
+
+**Fixed values: use them exactly**
+
+The story config has a `state_rules` section listing the only values the application accepts for some fields. Copy these values exactly, in the same spelling and case. Any other wording is rejected and not saved. This matters because the ending is checked against these exact values: if Elara is cured, her `health` must be exactly `"recovering"`, not "recovering slowly" or "Recovering".
+
+- `characters.<name>.health` and `characters.<name>.consciousness`: one of the values in `state_rules.character_fields`.
+- `story.act_progress`: one of `state_rules.act_progress`.
+- `world.village_awareness.<field>`: one of `state_rules.village_awareness.<field>`.
+- `reader.location` and `characters.<name>.location`: one of the ids in the config's `locations` list (for example `"greymere_forest"`, not "the forest").
+- `story.flags`: only flag names from the config's `flags`, with the value `true` or `false`.
+- `story.plot_beats_hit`: only beat ids from the config's `plot_beats`, from the current act, an earlier act, or the next act. Beats two or more acts ahead are rejected.
+- `story.current_act`: a whole number, staying the same or moving forward by one.
 
 **Rules for state updates:**
 
 - Only update fields that **actually changed** this turn. Leave unchanged fields as they are.
-- **You can only update the values of existing fields.** You must not add new fields, remove existing fields, or change the structure of the state document. The state schema is fixed. If you need a field that doesn't exist, it doesn't exist for a reason. Work within the schema you're given.
+- **You can only update the values of existing fields.** You must not add new fields, remove existing fields, or change the structure of the state document. The state schema is fixed. Unknown fields, characters, locations, flags and beats are rejected.
 - **Location visited tracking**: When the reader travels to a new location, set `visited: true`, increment `visit_count`, and set `last_visited` to the current story time. If the reader returns to a previously visited location, increment `visit_count` and update `last_visited`.
 - **Secret reveals**: Only add a secret to `revealed_secrets` if the story state and character disposition justify it.
-- **Plot beats**: Only add a beat to `plot_beats_hit` if the reader's action genuinely triggered it. Do not pre-emptively trigger future beats.
-- **Flags**: Set flags to `true` when the corresponding event has occurred. Flags are one-way (they do not get set back to `false`).
-- **Choice history**: Always append a new entry. Never modify or delete previous entries.
+- **Plot beats**: Only add a beat to `plot_beats_hit` if the reader's action genuinely triggered it. Do not pre-emptively trigger future beats. A beat already hit is not recorded twice.
+- **Act changes**: When a beat opens a new act, set `story.current_act` to the new act number in the same reply as that beat. The application does not move the act forward for you.
+- **Flags**: Set flags to `true` when the corresponding event has occurred. Flags are one-way: the application refuses to set a flag back to `false`.
+- **Choice history**: Always add a new entry for a real story action. Never modify or delete previous entries.
 
 ### What NOT to Do
 

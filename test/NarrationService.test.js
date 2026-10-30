@@ -248,6 +248,61 @@ test('applyStateUpdates: appends to choice history stamped with the new turn num
   });
 });
 
+test('applyStateUpdates: accepts the choice_history key the prompt asks for', () => {
+  const svc = new NarrationService(makeStoryManagerStub(), 'key');
+  const session = makeSession();
+
+  svc.applyStateUpdates(session, {
+    choice_history: { action: 'checked on Elara', consequence: 'found her feverish' },
+  }, 'n');
+
+  assert.deepStrictEqual(session.choice_history, [
+    { turn: 4, action: 'checked on Elara', consequence: 'found her feverish' },
+  ]);
+});
+
+test('applyStateUpdates: accepts a list of choice_history entries', () => {
+  const svc = new NarrationService(makeStoryManagerStub(), 'key');
+  const session = makeSession();
+
+  svc.applyStateUpdates(session, {
+    choice_history: [
+      { action: 'checked on Elara', consequence: 'found her feverish' },
+      { action: 'read the torn page', consequence: 'learned of moonpetal' },
+    ],
+  }, 'n');
+
+  assert.strictEqual(session.choice_history.length, 2);
+  assert.ok(session.choice_history.every(e => e.turn === 4));
+});
+
+test('applyStateUpdates: the code sets the choice turn number, not the model', () => {
+  const svc = new NarrationService(makeStoryManagerStub(), 'key');
+  const session = makeSession();
+
+  svc.applyStateUpdates(session, {
+    choice_history: { turn: 99, action: 'a', consequence: 'c' },
+  }, 'n');
+
+  assert.strictEqual(session.choice_history[0].turn, 4);
+});
+
+test('applyStateUpdates: records no choice when the AI reports none, such as small talk', () => {
+  const svc = new NarrationService(makeStoryManagerStub(), 'key');
+
+  const smallTalk = makeSession();
+  svc.applyStateUpdates(smallTalk, {}, 'Elara stirs at your greeting.', 'hi');
+  assert.deepStrictEqual(smallTalk.choice_history, []);
+
+  const noBlock = makeSession();
+  svc.applyStateUpdates(noBlock, null, 'The scene unfolds.', 'I check on Elara');
+  assert.deepStrictEqual(noBlock.choice_history, []);
+
+  const opening = makeSession({ session: { turn_count: 0 } });
+  svc.applyStateUpdates(opening, {}, 'Opening narration.', 'Opening turn instruction');
+  assert.deepStrictEqual(opening.choice_history, []);
+});
+
 test('applyStateUpdates: appends user action and narration to conversation_history', () => {
   const svc = new NarrationService(makeStoryManagerStub(), 'key');
   const session = makeSession();
@@ -293,7 +348,8 @@ test('applyStateUpdates: increments turn and saves narration even when stateUpda
   assert.strictEqual(session.session.last_llm_output, 'NEW NARRATION');
 });
 
-test('BUG: plot beats are appended without de-duplication', { todo: true }, () => {
+// Fixed by state validation (src/StateValidator.js); was a TODO test.
+test('applyStateUpdates: plot beats are not recorded twice', () => {
   const svc = new NarrationService(makeStoryManagerStub(), 'key');
   const session = makeSession();
 
@@ -303,9 +359,10 @@ test('BUG: plot beats are appended without de-duplication', { todo: true }, () =
   assert.deepStrictEqual(session.story.plot_beats_hit, ['enter_forest']);
 });
 
-test('BUG: flags can be reset to false, but flags are meant to be one-way', { todo: true }, () => {
+// Fixed by state validation (src/StateValidator.js); was a TODO test.
+test('applyStateUpdates: flags are one-way and cannot be reset to false', () => {
   // docs/state-management.md and AGENTS.md both state "Flags never go back to
-  // false", but Object.assign happily overwrites true with false.
+  // false"; the validator now rejects a true to false change.
   const svc = new NarrationService(makeStoryManagerStub(), 'key');
   const session = makeSession();
 
@@ -315,12 +372,21 @@ test('BUG: flags can be reset to false, but flags are meant to be one-way', { to
   assert.strictEqual(session.story.flags.story_started, true);
 });
 
-test('BUG: current_act cannot be set back to act 0 and scene cannot be cleared', { todo: true }, () => {
-  // Truthiness checks mean falsy-but-valid values are silently dropped.
+test('applyStateUpdates: rejects moving current_act back to act 0 and clearing the scene', () => {
   const svc = new NarrationService(makeStoryManagerStub(), 'key');
   const session = makeSession();
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (message) => warnings.push(message);
+  let result;
+  try {
+    result = svc.applyStateUpdates(session, { story: { current_act: 0, current_scene: '' } }, 'n');
+  } finally {
+    console.warn = originalWarn;
+  }
 
-  svc.applyStateUpdates(session, { story: { current_scene: '' } }, 'n');
-
-  assert.strictEqual(session.story.current_scene, '');
+  assert.strictEqual(session.story.current_act, 1);
+  assert.strictEqual(session.story.current_scene, 'Morning in the Apothecary');
+  assert.deepStrictEqual(result.rejected.map(r => r.path).sort(), ['story.current_act', 'story.current_scene']);
+  assert.strictEqual(warnings.length, 2);
 });

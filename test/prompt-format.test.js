@@ -1,0 +1,89 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('fs');
+const path = require('path');
+
+const NarrationService = require('../src/NarrationService');
+const { validateStateUpdate } = require('../src/StateValidator');
+
+const ROOT = path.join(__dirname, '..');
+const prompt = fs.readFileSync(path.join(ROOT, 'prompts/system-prompt.md'), 'utf8');
+const config = JSON.parse(fs.readFileSync(path.join(ROOT, 'stories/the-herbalists-choice-config.json'), 'utf8'));
+const template = JSON.parse(fs.readFileSync(path.join(ROOT, 'sessions/session-template.json'), 'utf8'));
+
+function promptExample() {
+  const section = prompt.slice(prompt.indexOf('**The state update block: exact format**'));
+  const match = section.match(/```json\n([\s\S]*?)\n```/);
+  assert.ok(match, 'system prompt has a json example block in the exact format section');
+  return match[1];
+}
+
+function svc() {
+  return new NarrationService({ getStory: () => ({ config }) }, 'key');
+}
+
+test('system prompt: example block is valid JSON at the top level, not wrapped', () => {
+  const example = JSON.parse(promptExample());
+  assert.ok(!('state_update' in example));
+  assert.ok('choice_history' in example);
+  assert.ok(!('choice_log' in example));
+});
+
+test('system prompt: example block passes validation with no rejections', () => {
+  const session = JSON.parse(JSON.stringify(template));
+  const { update, rejected } = validateStateUpdate(session, JSON.parse(promptExample()), config);
+
+  assert.deepStrictEqual(rejected, []);
+  assert.ok(update.characters && update.story && update.reader && update.world && update.choice_history);
+});
+
+test('system prompt: example block is found by parseResponse in a full reply', () => {
+  const reply = [
+    'You kneel by the cot. Elara is burning up.',
+    '',
+    '========',
+    '',
+    'Her breathing is shallow. What do you do?',
+    '',
+    '1. Search the shelves',
+    '2. Run for help',
+    'Or you can suggest your own action.',
+    '',
+    '```json',
+    promptExample(),
+    '```',
+  ].join('\n');
+
+  const { narration, stateUpdate } = svc().parseResponse(reply);
+  assert.deepStrictEqual(stateUpdate, JSON.parse(promptExample()));
+  assert.doesNotMatch(narration, /```/);
+  assert.match(narration, /Or you can suggest your own action\.$/);
+});
+
+test('system prompt: asks for choice_history, never choice_log, and names the fixed values', () => {
+  assert.match(prompt, /`choice_history`/);
+  assert.doesNotMatch(prompt, /choice_log/);
+  assert.match(prompt, /state_rules/);
+  assert.match(prompt, /must be exactly `"recovering"`/);
+});
+
+test('parseResponse: tolerates Windows line endings and spaces after the fence', () => {
+  const reply = 'Prose.\r\n\r\n```json  \r\n{"story": {"flags": {"forest_entered": true}}}\r\n```';
+  const { narration, stateUpdate } = svc().parseResponse(reply);
+
+  assert.deepStrictEqual(stateUpdate, { story: { flags: { forest_entered: true } } });
+  assert.strictEqual(narration, 'Prose.');
+});
+
+test('parseResponse plus applyStateUpdates: the wrapped shape from the old design doc is still saved', () => {
+  const session = JSON.parse(JSON.stringify(template));
+  const reply = 'Prose.\n\n```json\n{"state_update": {"story": {"flags": {"reader_checked_elara": true}}, "choice_log": {"action": "check on Elara", "consequence": "found her feverish"}}}\n```';
+  const service = svc();
+  const { narration, stateUpdate } = service.parseResponse(reply);
+  service.applyStateUpdates(session, stateUpdate, narration, 'I check on Elara');
+
+  assert.strictEqual(session.story.flags.reader_checked_elara, true);
+  assert.deepStrictEqual(session.choice_history, [
+    { turn: 1, action: 'check on Elara', consequence: 'found her feverish' },
+  ]);
+});

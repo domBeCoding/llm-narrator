@@ -64,6 +64,19 @@
     }
   },
 
+  "state_rules": {
+    "description": "Fixed values the narrator must use. The application rejects any other value for these fields and never saves it.",
+    "character_fields": {
+      "health": ["healthy", "critical_fever", "deteriorating", "recovering"],
+      "consciousness": ["alert", "awake", "barely_conscious", "fading", "unconscious"]
+    },
+    "act_progress": ["early", "middle", "late"],
+    "village_awareness": {
+      "elara_illness": ["none", "low", "spreading", "widely_known"],
+      "forest_activity": ["none", "someone_entered", "search_party"]
+    }
+  },
+
   "end_conditions": {
     "all_required": [
       {"flag": "moonpetal_obtained", "value": true},
