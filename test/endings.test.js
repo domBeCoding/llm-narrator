@@ -215,3 +215,30 @@ test('playthrough: a mixed Halden and Tomas route matches both of their endings,
   // The concluding directive lets the AI weave a combination of endings.
   assert.deepStrictEqual(matchingVariants(session, config), ['halden_reconciled', 'tomas_helped']);
 });
+
+// End conditions only check flags and character fields, and no flag tells
+// "Halden is helping" apart from "Halden turned the reader away". So if the AI
+// sets Elara to recovering on the Halden path before the reunion, the story
+// ends at once on the turned away ending. The only guard is the prompt line
+// asking the AI to report the reunion first. This test pins that behaviour.
+test('playthrough: on the Halden path, recovery before reconciliation ends the story early on halden_turned_away', async () => {
+  const storyManager = await loadStory();
+  const config = storyManager.getStory('the-herbalists-choice').config;
+  const svc = new NarrationService(storyManager, 'key', { llmClient: { call: async () => '' } });
+
+  const recoveryFirst = {
+    story: { current_act: 3, plot_beats_hit: ['elara_recovery'] },
+    characters: { elara: { health: 'recovering', consciousness: 'awake', disposition: 'calm, grateful' } },
+    reader: { location: 'apothecary' },
+  };
+  // The reunion would have come in the next reply, but the bot moves the
+  // session to concluding as soon as the end conditions are met.
+  const replies = [{}, ...ACT_1, ...ACT_2_ROUTES.halden_reconciled, recoveryFirst];
+  const { session, warnings, endedAtTurn } = play(svc, config, replies);
+
+  assert.deepStrictEqual(warnings, []);
+  assert.strictEqual(endedAtTurn, replies.length, 'the story ends on the recovery reply, before the reunion');
+  assert.strictEqual(session.story.flags.halden_reconciled, false);
+  assert.ok(!session.story.plot_beats_hit.includes('halden_elara_reunion'));
+  assert.deepStrictEqual(matchingVariants(session, config), ['halden_turned_away']);
+});

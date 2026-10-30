@@ -87,3 +87,11 @@ test('parseResponse plus applyStateUpdates: the wrapped shape from the old desig
     { turn: 1, action: 'check on Elara', consequence: 'found her feverish' },
   ]);
 });
+
+test('system prompt: on the Halden path Elara must not recover before the reunion', () => {
+  const line = prompt.split('\n').find(l => l.startsWith("**The Herbalist's Choice, Halden path:**"));
+  assert.ok(line, 'system prompt has the Halden path line');
+  assert.match(line, /do not set Elara's `health` to `"recovering"` until the reunion/);
+  assert.match(line, /halden_elara_reunion/);
+  assert.match(line, /halden_reconciled: true/);
+});
