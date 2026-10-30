@@ -145,7 +145,7 @@ The reader obtains the Moonpetal (through whichever path they took). The experie
 
 The reader prepares the Moonpetal remedy. Elara recovers over the next few days. The story ends on a warm, quiet morning — mirroring the opening scene but transformed. The apothecary is the same, but the reader has changed. They've proven their capability. The world feels a little more open.
 
-**Possible endings (all happy, but varied)**:
+**Possible endings (all hopeful, but varied)**:
 - **If Halden reconciled with Elara**: Halden visits regularly now. The apothecary has three people in it. Elara teaches again. The reader has two mentors.
 - **If Tomas helped**: Tomas and the reader share a quiet moment. Their relationship has deepened. He says something earnest. The reader feels seen.
 - **If the reader went alone**: The reader sits with Elara as she recovers. She looks at them with new respect. "You don't need me to watch over you anymore," she says. The reader feels the bittersweet weight of growing up.
