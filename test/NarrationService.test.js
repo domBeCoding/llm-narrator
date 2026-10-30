@@ -380,12 +380,21 @@ test('applyStateUpdates: flags are one-way and cannot be reset to false', () => 
   assert.strictEqual(session.story.flags.story_started, true);
 });
 
-test('BUG: current_act cannot be set back to act 0 and scene cannot be cleared', { todo: true }, () => {
-  // Truthiness checks mean falsy-but-valid values are silently dropped.
+test('applyStateUpdates: rejects moving current_act back to act 0 and clearing the scene', () => {
   const svc = new NarrationService(makeStoryManagerStub(), 'key');
   const session = makeSession();
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (message) => warnings.push(message);
+  let result;
+  try {
+    result = svc.applyStateUpdates(session, { story: { current_act: 0, current_scene: '' } }, 'n');
+  } finally {
+    console.warn = originalWarn;
+  }
 
-  svc.applyStateUpdates(session, { story: { current_scene: '' } }, 'n');
-
-  assert.strictEqual(session.story.current_scene, '');
+  assert.strictEqual(session.story.current_act, 1);
+  assert.strictEqual(session.story.current_scene, 'Morning in the Apothecary');
+  assert.deepStrictEqual(result.rejected.map(r => r.path).sort(), ['story.current_act', 'story.current_scene']);
+  assert.strictEqual(warnings.length, 2);
 });
