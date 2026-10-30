@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 
 class SessionManager {
@@ -44,9 +45,22 @@ class SessionManager {
     return path.join(this.sessionsDir, `active-${userId}.json`);
   }
 
-  /** Remembers which session the user chose, so later messages go to it. */
+  /**
+   * Remembers which session the user chose, so later messages go to it. The
+   * record is written to a temporary file in the same folder and then renamed
+   * over the old one, so a reader never sees a half-written record.
+   */
   async setActiveSession(userId, sessionNumber) {
-    await fs.writeFile(this.activePointerFile(userId), JSON.stringify({ sessionNumber }), 'utf8');
+    const target = this.activePointerFile(userId);
+    // Ends in .json so it matches the same git-ignore rule as the record.
+    const temp = path.join(this.sessionsDir, `active-${userId}.tmp-${process.pid}-${crypto.randomUUID()}.json`);
+    try {
+      await fs.writeFile(temp, JSON.stringify({ sessionNumber }), 'utf8');
+      await fs.rename(temp, target);
+    } catch (e) {
+      await fs.rm(temp, { force: true });
+      throw e;
+    }
   }
 
   async getNextSessionNumber(userId) {

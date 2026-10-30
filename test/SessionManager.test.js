@@ -271,6 +271,31 @@ test('setActiveSession: the choice is kept on disk, so a new manager sees it', a
   assert.strictEqual(session.session.session_id, 'session-42-1');
 });
 
+test('setActiveSession: replaces the record in one step and leaves no temporary files', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1);
+  await writeSession(dir, '42', 2);
+
+  await Promise.all([manager.setActiveSession('42', 1), manager.setActiveSession('42', 2)]);
+
+  const record = JSON.parse(await fs.readFile(path.join(dir, 'active-42.json'), 'utf8'));
+  assert.ok([1, 2].includes(record.sessionNumber));
+  const leftovers = (await fs.readdir(dir)).filter(f => f.includes('.tmp-'));
+  assert.deepStrictEqual(leftovers, []);
+});
+
+test('setActiveSession: removes its temporary file if the rename fails', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  // A folder where the record should be makes the rename fail.
+  await fs.mkdir(path.join(dir, 'active-42.json'));
+  await fs.writeFile(path.join(dir, 'active-42.json', 'keep'), '', 'utf8');
+
+  await assert.rejects(manager.setActiveSession('42', 1));
+
+  const leftovers = (await fs.readdir(dir)).filter(f => f.includes('.tmp-'));
+  assert.deepStrictEqual(leftovers, []);
+});
+
 test('setActiveSession: the choice is per user', async (t) => {
   const { dir, manager } = await makeManager(t);
   await writeSession(dir, '42', 1);
