@@ -1,4 +1,5 @@
 const KimiClient = require('./llm/KimiClient');
+const { validateStateUpdate } = require('./StateValidator');
 
 const NARRATOR_SYSTEM = 'You are the Narrator, a Dungeon Master for interactive storytelling.';
 const REQUEST_TIMEOUT_MS = 60000;
@@ -88,6 +89,15 @@ class NarrationService {
     return { narration, stateUpdate };
   }
 
+  getStoryConfig(session) {
+    const story = this.storyManager && typeof this.storyManager.getStory === 'function'
+      ? this.storyManager.getStory(session.session.story_id)
+      : null;
+    return story ? story.config : null;
+  }
+
+  // Every change the AI proposes is validated against the story config before
+  // it touches the session. Rejected changes are logged and never saved.
   applyStateUpdates(session, stateUpdate, narration, userAction) {
     session.session.turn_count += 1;
     session.session.last_action_at = new Date().toISOString();
@@ -99,47 +109,58 @@ class NarrationService {
       session.conversation_history.push({ role: 'assistant', content: narration });
     }
 
-    this.appendChoiceHistory(session, stateUpdate, userAction);
+    const { update, rejected } = validateStateUpdate(session, stateUpdate, this.getStoryConfig(session));
+    this.logRejected(session, rejected);
 
-    if (!stateUpdate) return;
+    this.appendChoiceHistory(session, update, userAction);
 
-    if (stateUpdate.characters) {
-      for (const [charName, updates] of Object.entries(stateUpdate.characters)) {
-        if (session.characters[charName]) {
-          Object.assign(session.characters[charName], updates);
+    if (!update) return { rejected };
+
+    if (update.characters) {
+      for (const [charName, updates] of Object.entries(update.characters)) {
+        Object.assign(session.characters[charName], updates);
+      }
+    }
+
+    if (update.reader) {
+      Object.assign(session.reader, update.reader);
+    }
+
+    if (update.story) {
+      const { plot_beats_hit: beats, flags, ...fields } = update.story;
+      if (beats) {
+        session.story.plot_beats_hit = session.story.plot_beats_hit || [];
+        session.story.plot_beats_hit.push(...beats);
+      }
+      if (flags) {
+        session.story.flags = session.story.flags || {};
+        Object.assign(session.story.flags, flags);
+      }
+      Object.assign(session.story, fields);
+    }
+
+    if (update.world) {
+      if (update.world.locations) {
+        for (const [locName, updates] of Object.entries(update.world.locations)) {
+          Object.assign(session.world.locations[locName], updates);
         }
       }
-    }
-
-    if (stateUpdate.reader) {
-      Object.assign(session.reader, stateUpdate.reader);
-    }
-
-    if (stateUpdate.story) {
-      if (stateUpdate.story.plot_beats_hit) {
-        session.story.plot_beats_hit.push(...stateUpdate.story.plot_beats_hit);
-      }
-      if (stateUpdate.story.flags) {
-        Object.assign(session.story.flags, stateUpdate.story.flags);
-      }
-      if (stateUpdate.story.current_act) {
-        session.story.current_act = stateUpdate.story.current_act;
-      }
-      if (stateUpdate.story.current_scene) {
-        session.story.current_scene = stateUpdate.story.current_scene;
+      if (update.world.village_awareness) {
+        Object.assign(session.world.village_awareness, update.world.village_awareness);
       }
     }
 
-    if (stateUpdate.world) {
-      if (stateUpdate.world.locations) {
-        for (const [locName, updates] of Object.entries(stateUpdate.world.locations)) {
-          if (session.world.locations[locName]) {
-            Object.assign(session.world.locations[locName], updates);
-          }
-        }
-      }
-    }
+    return { rejected };
+  }
 
+  // Logs what was dropped and why. Only the AI's proposed values are logged
+  // (shortened); nothing from the environment or credentials.
+  logRejected(session, rejected) {
+    if (!rejected || rejected.length === 0) return;
+    const sessionId = session.session && session.session.session_id;
+    for (const item of rejected) {
+      console.warn(`[state-validation] session=${sessionId} turn=${session.session.turn_count} rejected ${item.path}=${item.value}: ${item.reason}`);
+    }
   }
 
   // The prompt asks for `choice_history`; older replies and the design doc use

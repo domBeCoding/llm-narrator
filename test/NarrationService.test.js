@@ -356,7 +356,8 @@ test('applyStateUpdates: increments turn and saves narration even when stateUpda
   assert.strictEqual(session.session.last_llm_output, 'NEW NARRATION');
 });
 
-test('BUG: plot beats are appended without de-duplication', { todo: true }, () => {
+// Fixed by state validation (src/StateValidator.js); was a TODO test.
+test('applyStateUpdates: plot beats are not recorded twice', () => {
   const svc = new NarrationService(makeStoryManagerStub(), 'key');
   const session = makeSession();
 
@@ -366,9 +367,10 @@ test('BUG: plot beats are appended without de-duplication', { todo: true }, () =
   assert.deepStrictEqual(session.story.plot_beats_hit, ['enter_forest']);
 });
 
-test('BUG: flags can be reset to false, but flags are meant to be one-way', { todo: true }, () => {
+// Fixed by state validation (src/StateValidator.js); was a TODO test.
+test('applyStateUpdates: flags are one-way and cannot be reset to false', () => {
   // docs/state-management.md and AGENTS.md both state "Flags never go back to
-  // false", but Object.assign happily overwrites true with false.
+  // false"; the validator now rejects a true to false change.
   const svc = new NarrationService(makeStoryManagerStub(), 'key');
   const session = makeSession();
 
