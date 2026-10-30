@@ -150,6 +150,7 @@ The reader prepares the Moonpetal remedy. Elara recovers over the next few days.
 - **If Tomas helped**: Tomas and the reader share a quiet moment. Their relationship has deepened. He says something earnest. The reader feels seen.
 - **If the reader went alone**: The reader sits with Elara as she recovers. She looks at them with new respect. "You don't need me to watch over you anymore," she says. The reader feels the bittersweet weight of growing up.
 - **If the reader involved Corwin**: Corwin visits, grudgingly impressed. The forest ban is quietly relaxed. The village feels less afraid.
+- **If Halden turned the reader away**: The reader brings the moonpetal home without Halden. Elara recovers. When the reader mentions the cottage at the forest's edge, Elara goes quiet, then smiles sadly. 'She always was stubborn.' Halden's door stays shut, for now. The reader learns that some old wounds are not theirs to mend.
 
 **State at end of Act 3**:
 - Reader: confident, proven, emotionally grown
