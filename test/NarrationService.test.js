@@ -287,28 +287,20 @@ test('applyStateUpdates: the code sets the choice turn number, not the model', (
   assert.strictEqual(session.choice_history[0].turn, 4);
 });
 
-test('applyStateUpdates: appends a fallback choice entry when a real action has no structured choice', () => {
+test('applyStateUpdates: records no choice when the AI reports none, such as small talk', () => {
   const svc = new NarrationService(makeStoryManagerStub(), 'key');
-  const session = makeSession();
 
-  svc.applyStateUpdates(session, null, 'The scene unfolds.', 'I check on Elara');
+  const smallTalk = makeSession();
+  svc.applyStateUpdates(smallTalk, {}, 'Elara stirs at your greeting.', 'hi');
+  assert.deepStrictEqual(smallTalk.choice_history, []);
 
-  assert.deepStrictEqual(session.choice_history, [{
-    turn: 4,
-    action: 'I check on Elara',
-    consequence: 'State advanced without structured choice details.',
-  }]);
-});
+  const noBlock = makeSession();
+  svc.applyStateUpdates(noBlock, null, 'The scene unfolds.', 'I check on Elara');
+  assert.deepStrictEqual(noBlock.choice_history, []);
 
-test('applyStateUpdates: no fallback choice entry on the opening turn or without an action', () => {
-  const svc = new NarrationService(makeStoryManagerStub(), 'key');
   const opening = makeSession({ session: { turn_count: 0 } });
   svc.applyStateUpdates(opening, {}, 'Opening narration.', 'Opening turn instruction');
-  assert.strictEqual(opening.choice_history.length, 0);
-
-  const noAction = makeSession();
-  svc.applyStateUpdates(noAction, {}, 'The scene unfolds.');
-  assert.strictEqual(noAction.choice_history.length, 0);
+  assert.deepStrictEqual(opening.choice_history, []);
 });
 
 test('applyStateUpdates: appends user action and narration to conversation_history', () => {

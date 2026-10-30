@@ -114,7 +114,7 @@ class NarrationService {
     const { update, rejected } = validateStateUpdate(session, stateUpdate, this.getStoryConfig(session));
     this.logRejected(session, rejected);
 
-    this.appendChoiceHistory(session, update, userAction);
+    this.appendChoiceHistory(session, update);
 
     if (!update) return { rejected };
 
@@ -168,22 +168,16 @@ class NarrationService {
   // The prompt asks for `choice_history`; older replies and the design doc use
   // `choice_log`. Accept either, as a single entry or a list of entries. The
   // turn number always comes from the code, never from the model.
-  appendChoiceHistory(session, stateUpdate, userAction) {
+  appendChoiceHistory(session, stateUpdate) {
     session.choice_history = session.choice_history || [];
     const choiceData = stateUpdate && (stateUpdate.choice_history ?? stateUpdate.choice_log);
     const entries = (Array.isArray(choiceData) ? choiceData : [choiceData])
       .filter(entry => entry && typeof entry === 'object' && !Array.isArray(entry));
 
-    if (entries.length > 0) {
-      for (const entry of entries) {
-        session.choice_history.push({ ...entry, turn: session.session.turn_count });
-      }
-    } else if (userAction && session.session.turn_count > 1) {
-      session.choice_history.push({
-        turn: session.session.turn_count,
-        action: userAction,
-        consequence: 'State advanced without structured choice details.'
-      });
+    // Only record a choice when the AI reported one. Small talk such as "hi"
+    // is not a choice and leaves no entry.
+    for (const entry of entries) {
+      session.choice_history.push({ ...entry, turn: session.session.turn_count });
     }
   }
 }

@@ -402,7 +402,7 @@ The system strips this block from the response before showing narration to the r
 - **Acts**: `current_act` must be an act in the config and can only stay the same or move forward by one.
 - **Lists**: `reader.knowledge` and character `revealed_secrets` only grow (new items are merged in); `reader.inventory` and `reader.skills` are replaced by the full new list.
 - **Location tracking**: `visited` cannot go from `true` back to `false`, and `visit_count` cannot go down.
-- **Choice history**: each entry needs `action` and `consequence` text; the turn number is always set by the code. If a real action comes back with no valid entry, a plain fallback entry is recorded.
+- **Choice history**: each entry needs `action` and `consequence` text; the turn number is always set by the code. A choice is only recorded when the AI reports one; small talk such as "hi" leaves no entry.
 
 When a story config leaves a rule out (for example no `state_rules`), only the type and schema checks apply.
 

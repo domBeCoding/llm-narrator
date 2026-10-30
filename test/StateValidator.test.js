@@ -390,18 +390,16 @@ test('applyStateUpdates: logged values are shortened', () => {
   assert.ok(lines[0].length < 400);
 });
 
-test('applyStateUpdates: an invalid choice entry falls back to the plain action entry', () => {
+test('applyStateUpdates: an invalid choice entry is rejected and nothing is recorded', () => {
   const svc = realService();
   const session = freshSession();
   session.session.turn_count = 2;
 
-  quietly(() => svc.applyStateUpdates(session, { choice_history: { note: 'nothing useful' } }, 'n', 'I look around'));
+  const { lines } = quietly(() => svc.applyStateUpdates(session, { choice_history: { note: 'nothing useful' } }, 'n', 'I look around'));
 
-  assert.deepStrictEqual(session.choice_history, [{
-    turn: 3,
-    action: 'I look around',
-    consequence: 'State advanced without structured choice details.',
-  }]);
+  assert.deepStrictEqual(session.choice_history, []);
+  assert.strictEqual(lines.length, 1);
+  assert.match(lines[0], /choice_history/);
 });
 
 test('Full flow with the real config: the ending only triggers on the exact allowed values', () => {
