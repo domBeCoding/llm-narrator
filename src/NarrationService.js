@@ -3,6 +3,7 @@ const { validateStateUpdate } = require('./StateValidator');
 
 const NARRATOR_SYSTEM = 'You are the Narrator, a Dungeon Master for interactive storytelling.';
 const REQUEST_TIMEOUT_MS = 60000;
+const JSON_BLOCK = /```json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```/;
 
 const PROVIDERS = {
   kimi: KimiClient,
@@ -68,7 +69,8 @@ class NarrationService {
   }
 
   parseResponse(response) {
-    const jsonMatch = response.match(/```json\n([\s\S]*?)\n```/);
+    // Tolerates Windows line endings and trailing spaces after the fence.
+    const jsonMatch = response.match(JSON_BLOCK);
 
     let narration = response;
     let stateUpdate = null;
@@ -76,7 +78,7 @@ class NarrationService {
     if (jsonMatch) {
       try {
         stateUpdate = JSON.parse(jsonMatch[1]);
-        narration = response.replace(/```json\n[\s\S]*?\n```/, '').trim();
+        narration = response.replace(JSON_BLOCK, '').trim();
       } catch (e) {
         console.error('Failed to parse state update JSON:', e);
       }

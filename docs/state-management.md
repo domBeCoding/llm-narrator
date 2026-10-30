@@ -257,14 +257,17 @@ The application layer (the Discord bot) owns state; the LLM only narrates and re
 │                                                         │
 │  5. Bot parses the narration and the state block         │
 │                                                         │
-│  6. Bot applies the state changes and records            │
+│  6. Bot validates each change against the story config   │
+│     (src/StateValidator.js), drops and logs invalid ones │
+│                                                         │
+│  7. Bot applies the valid changes and records            │
 │     turn_count, last_action_at and last_llm_output       │
 │                                                         │
-│  7. Bot saves the session file                          │
+│  8. Bot saves the session file                          │
 │                                                         │
-│  8. Bot sends the narration to the reader               │
+│  9. Bot sends the narration to the reader               │
 │                                                         │
-│  9. Repeat                                              │
+│  10. Repeat                                             │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -289,7 +292,7 @@ The LLM never sets `status` — that is a deterministic application-level decisi
 
 ### Target Turn Cycle (with validation)
 
-Validation of the model's proposed changes is not yet implemented. The intended shape:
+Validation of the model's proposed changes against the story config is implemented in `src/StateValidator.js` (see "Validation Rules" below). Re-prompting the model after a rejection, and the wider checks in step 6, are not built yet. The intended shape:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -342,38 +345,38 @@ The DM-style narration and suggested actions, as defined in the system prompt.
 
 #### Part 2: State Update (hidden from reader, parsed by system)
 
-A structured block the system parses to update state. Format:
+A structured block the system parses to update state. The sections sit at the **top level** of the JSON object, and the choice entry is called `choice_history`, matching `prompts/system-prompt.md` (which shows the model the same example). Format:
 
 ```json
 {
-  "state_update": {
-    "characters": {
-      "elara": {
-        "health": "critical",
-        "consciousness": "unconscious"
-      }
-    },
-    "reader": {
-      "knowledge": ["elara_is_sick"],
-      "emotional_state": "alarmed"
-    },
-    "story": {
-      "plot_beats_hit": ["elara_found_sick"],
-      "flags": {
-        "reader_checked_elara": true
-      }
-    },
-    "choice_log": {
-      "action": "check on Elara",
-      "consequence": "found her feverish and barely conscious",
-      "key_state_changes": [
-        "elara.health=critical",
-        "elara.consciousness=barely"
-      ]
+  "characters": {
+    "elara": {
+      "health": "critical_fever",
+      "consciousness": "barely_conscious"
     }
+  },
+  "reader": {
+    "knowledge": ["elara_is_sick"],
+    "emotional_state": "alarmed"
+  },
+  "story": {
+    "plot_beats_hit": ["elara_found_sick"],
+    "flags": {
+      "reader_checked_elara": true
+    }
+  },
+  "choice_history": {
+    "action": "check on Elara",
+    "consequence": "found her feverish and barely conscious",
+    "key_state_changes": [
+      "elara.health=critical_fever",
+      "elara.consciousness=barely_conscious"
+    ]
   }
 }
 ```
+
+For tolerance, the parser also accepts the older shape where everything is wrapped in `"state_update": { ... }`, and `choice_log` as a second name for `choice_history`. New prompts and docs should use the top-level shape.
 
 The system strips this block from the response before showing narration to the reader.
 
@@ -387,7 +390,25 @@ The system strips this block from the response before showing narration to the r
 
 ## Validation Rules
 
-The system should validate LLM-proposed state changes against these rules:
+### What is checked today
+
+`src/StateValidator.js` checks every proposed change against the story config and the current session before it is saved:
+
+- **Granularity**: each change is checked on its own. An invalid change is dropped and logged (`[state-validation]` with the field path, a shortened copy of the proposed value and the reason); the valid changes from the same reply are still saved. Only a block that is not a JSON object is ignored as a whole. This keeps one badly worded field from throwing away real progress such as a flag that became true.
+- **Fixed schema**: only characters, locations, fields and relationships that already exist in the session can change. `session`, `conversation_history`, plot beat availability, weather and other application-owned fields are ignored.
+- **Fixed values**: the story config's `state_rules` lists allowed values for character `health` and `consciousness`, `story.act_progress` and each `world.village_awareness` field. Locations must be ids from the config's `locations`.
+- **Flags**: must be named in the config's `flags`, must be `true` or `false`, and are one-way (a `true` flag is never set back to `false`).
+- **Plot beats**: must be named in the config's `plot_beats`, are recorded once only, and cannot come from an act later than the current one (after any act change in the same reply).
+- **Acts**: `current_act` must be an act in the config and can only stay the same or move forward by one.
+- **Lists**: `reader.knowledge` and character `revealed_secrets` only grow (new items are merged in); `reader.inventory` and `reader.skills` are replaced by the full new list.
+- **Location tracking**: `visited` cannot go from `true` back to `false`, and `visit_count` cannot go down.
+- **Choice history**: each entry needs `action` and `consequence` text; the turn number is always set by the code. If a real action comes back with no valid entry, a plain fallback entry is recorded.
+
+When a story config leaves a rule out (for example no `state_rules`), only the type and schema checks apply.
+
+### Further rules (not built yet)
+
+The system should also validate LLM-proposed state changes against these rules:
 
 1. **Secret gating**: A character's secret can only be added to `revealed_secrets` if the corresponding story flag or plot beat permits it. E.g., Halden's "knows_elara" secret can only be revealed if `halden_encountered` is true AND her disposition is at least "grudging."
 
