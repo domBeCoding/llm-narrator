@@ -23,7 +23,6 @@ The end conditions have all been met. This is the **final turn** of the story. Y
         all_required: [
           { flag: 'moonpetal_obtained', value: true },
           { character: 'elara', field: 'health', value: 'recovering' },
-          { flag: 'halden_reconciled', value: true },
         ],
       },
       ending_variants: [
@@ -42,6 +41,7 @@ The end conditions have all been met. This is the **final turn** of the story. Y
           conditions: [
             { flag: 'halden_encountered', value: false },
             { flag: 'tomas_involved', value: false },
+            { flag: 'corwin_involvement', value: false },
           ],
           description: 'The reader sits with Elara as she recovers.',
         },
@@ -49,6 +49,16 @@ The end conditions have all been met. This is the **final turn** of the story. Y
           id: 'corwin_involved',
           conditions: [{ flag: 'corwin_involvement', value: true }],
           description: 'Corwin visits, grudgingly impressed.',
+        },
+        {
+          id: 'halden_turned_away',
+          conditions: [
+            { flag: 'halden_encountered', value: true },
+            { flag: 'halden_reconciled', value: false },
+            { flag: 'tomas_involved', value: false },
+            { flag: 'corwin_involvement', value: false },
+          ],
+          description: 'The reader brings the moonpetal home without Halden.',
         },
       ],
       flags: {
@@ -120,18 +130,16 @@ test('evaluateEndConditions: returns false when only some conditions are met', (
   assert.strictEqual(svc.evaluateEndConditions(session, config), false);
 
   session = makeSession();
-  session.story.flags.moonpetal_obtained = true;
   session.characters.elara.health = 'recovering';
   assert.strictEqual(svc.evaluateEndConditions(session, config), false);
 });
 
-test('evaluateEndConditions: returns true when all three conditions are met', () => {
+test('evaluateEndConditions: returns true when both conditions are met, without halden_reconciled', () => {
   const svc = makeService();
   const { config } = storyManagerStub.getStory();
   const session = makeSession();
   session.story.flags.moonpetal_obtained = true;
   session.characters.elara.health = 'recovering';
-  session.story.flags.halden_reconciled = true;
 
   assert.strictEqual(svc.evaluateEndConditions(session, config), true);
 });
@@ -257,4 +265,12 @@ test('Full flow: active → concluding → completed across two turns', () => {
 
   assert.strictEqual(session.session.status, 'completed');
   assert.strictEqual(session.session.turn_count, 7); // 5 + 1 + 1
+});
+
+test('stub config: end conditions and ending rules match the shipped story config', () => {
+  const real = require('../stories/the-herbalists-choice-config.json');
+  const { config } = storyManagerStub.getStory();
+  assert.deepStrictEqual(config.end_conditions, real.end_conditions);
+  const rules = variants => variants.map(({ id, conditions }) => ({ id, conditions }));
+  assert.deepStrictEqual(rules(config.ending_variants), rules(real.ending_variants));
 });
