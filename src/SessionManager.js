@@ -103,25 +103,30 @@ class SessionManager {
     return sessions.sort((a, b) => b.sessionNumber - a.sessionNumber);
   }
 
-  async getActiveSession(userId) {
+  /**
+   * The number of the session the user's messages go to: the one they chose,
+   * or the newest if there is no valid choice. Null if they have no sessions.
+   */
+  async getActiveSessionNumber(userId) {
     try {
       const { sessionNumber } = JSON.parse(await fs.readFile(this.activePointerFile(userId), 'utf8'));
       // Only a positive whole number names a session; anything else (a
       // string, a fraction, a path) is ignored rather than used in a file name.
-      if (Number.isInteger(sessionNumber) && sessionNumber > 0) {
-        const chosen = await this.getSessionByNumber(userId, sessionNumber);
-        if (chosen) return chosen;
+      if (Number.isInteger(sessionNumber) && sessionNumber > 0
+        && await this.getSessionByNumber(userId, sessionNumber)) {
+        return sessionNumber;
       }
     } catch (e) {
       // No choice recorded, or it is unreadable: fall back to the newest.
     }
 
     const sessions = await this.getUserSessions(userId);
-    if (sessions.length === 0) return null;
+    return sessions.length === 0 ? null : sessions[0].sessionNumber;
+  }
 
-    const latest = sessions[0];
-    const data = await fs.readFile(path.join(this.sessionsDir, latest.file), 'utf8');
-    return JSON.parse(data);
+  async getActiveSession(userId) {
+    const sessionNumber = await this.getActiveSessionNumber(userId);
+    return sessionNumber === null ? null : this.getSessionByNumber(userId, sessionNumber);
   }
 
   async getSessionByNumber(userId, sessionNumber) {

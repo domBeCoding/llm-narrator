@@ -154,3 +154,37 @@ test('a message sent while the opening scene is generating waits for it and both
   assert.deepStrictEqual(saved.choice_history, ['OPENING', 'I look around']);
   assert.strictEqual(saved.session.turn_count, 2);
 });
+
+test('a message sent before the reader switches session stays with the session it was sent to', async (t) => {
+  // Message A is slow. Message B arrives while A is still playing, so it waits
+  // in the queue. The reader then switches to session 2 before B's turn starts.
+  const { bot, prompted, readSaved } = await makeBot(t, { sessions: [1, 2], delays: { 'I open the door': 50 } });
+  await bot.sessionManager.setActiveSession(USER_ID, 1);
+
+  const a = bot.handleMessage(fakeMessage('I open the door'));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const b = bot.handleMessage(fakeMessage('I step inside'));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  await bot.handleButtonInteraction(fakeButton('load_session_2'));
+  await Promise.all([a, b]);
+
+  assert.deepStrictEqual(prompted.map(p => [p.action, p.sessionId]), [
+    ['I open the door', 'session-42-1'],
+    ['I step inside', 'session-42-1'],
+  ]);
+  assert.deepStrictEqual((await readSaved(1)).choice_history, ['I open the door', 'I step inside']);
+  assert.deepStrictEqual((await readSaved(2)).choice_history, []);
+
+  // Messages sent after the switch go to session 2.
+  await bot.handleMessage(fakeMessage('I wave'));
+  assert.deepStrictEqual((await readSaved(2)).choice_history, ['I wave']);
+});
+
+test('messages from one reader are played in the order they arrived', async (t) => {
+  const { bot, readSaved } = await makeBot(t);
+  const actions = ['one', 'two', 'three', 'four', 'five'].map(w => `I count ${w}`);
+
+  await Promise.all(actions.map(action => bot.handleMessage(fakeMessage(action))));
+
+  assert.deepStrictEqual((await readSaved(1)).choice_history, actions);
+});
