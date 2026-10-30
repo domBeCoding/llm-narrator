@@ -26,8 +26,8 @@ Tracks the current condition and disposition of every NPC in the story.
 ```yaml
 characters:
   elara:
-    health: "critical" # healthy | minor_ill | critical | recovering | dead
-    consciousness: "fading" # alert | drowsy | fading | unconscious
+    health: "critical_fever" # healthy | critical_fever | deteriorating | recovering (state_rules)
+    consciousness: "fading" # alert | awake | barely_conscious | fading | unconscious (state_rules)
     location: "apothecary"
     disposition: "vulnerable" # current emotional/behavioral state
     revealed_secrets: [] # which of her secrets the reader knows
@@ -101,7 +101,7 @@ Tracks where the reader is in the story structure and what's happened so far.
 story:
   current_act: 1
   current_scene: "Morning in the Apothecary"
-  act_progress: "early" # early | mid | late | complete
+  act_progress: "early" # early | middle | late (state_rules)
   time_in_story: "Day 1, early morning"
   time_pressure: "moderate" # none | low | moderate | high | critical
 
@@ -168,8 +168,8 @@ world:
       last_visited: null
 
   village_awareness:
-    elara_illness: "low" # low | spreading | widely_known
-    forest_activity: "none" # none | someone_entered | search_party
+    elara_illness: "low" # none | low | spreading | widely_known (state_rules)
+    forest_activity: "none" # none | someone_entered | search_party (state_rules)
 
   weather: "overcast, cool autumn morning"
 
