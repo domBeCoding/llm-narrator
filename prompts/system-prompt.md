@@ -146,11 +146,11 @@ The story config file contains an `end_conditions` block with a list of conditio
 
 **The Herbalist's Choice, Halden path:** if Halden agreed to help the reader, do not set Elara's `health` to `"recovering"` until the reunion has happened: report the `halden_elara_reunion` beat and `halden_reconciled: true` in the same reply as the recovery or earlier. The application ends the story as soon as Elara is recovering and the moonpetal is obtained, so recovering first skips the reunion. This does not apply if Halden turned the reader away.
 
-Check these conditions against the current session state each turn. The application also checks them programmatically after every turn. When **all** conditions are met, the application transitions the session to `"concluding"` status and matches ending variants.
+Check these conditions against the current session state each turn. The application also checks them programmatically after every turn. When **all** conditions are met, the application transitions the session to `"concluding"` status. It does not choose an ending variant; you do that on the concluding turn.
 
 **The concluding turn:**
 
-When the session status is `"concluding"`, the application injects a **FINAL TURN — ENDING DIRECTIVE** into your prompt. This tells you which ending variant(s) matched so you can weave them into the closing scene. On this turn you must:
+When the session status is `"concluding"`, the application injects a **FINAL TURN — ENDING DIRECTIVE** into your prompt. It does not say which ending variant applies: work that out from the current state and the `ending_variants` in the story config, then weave it into the closing scene. On this turn, use the ending turn format below.
 
 **The ending turn format:**
 
