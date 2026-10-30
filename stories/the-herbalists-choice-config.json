@@ -80,8 +80,7 @@
   "end_conditions": {
     "all_required": [
       {"flag": "moonpetal_obtained", "value": true},
-      {"character": "elara", "field": "health", "value": "recovering"},
-      {"flag": "halden_reconciled", "value": true}
+      {"character": "elara", "field": "health", "value": "recovering"}
     ]
   },
 

@@ -57,17 +57,27 @@ const ACT_2_ROUTES = {
   ],
 };
 
-// The config's end conditions require halden_reconciled for every ending,
-// including solo_path, which also requires halden_encountered to stay false.
-// That is a story decision, so the config is left as it is and every route
-// sets halden_reconciled here.
+// Act 3: the reader returns and Elara recovers. Only the Halden route has the
+// reunion beat and sets halden_reconciled; the other routes never meet her.
 const ACT_3 = [
+  {
+    story: { current_act: 3, plot_beats_hit: ['elara_recovery'] },
+    characters: { elara: { health: 'recovering', consciousness: 'awake', disposition: 'calm, grateful' } },
+    reader: { location: 'apothecary' },
+  },
+];
+
+const ACT_3_WITH_HALDEN = [
   {
     story: { current_act: 3, plot_beats_hit: ['elara_recovery', 'halden_elara_reunion'], flags: { halden_reconciled: true } },
     characters: { elara: { health: 'recovering', consciousness: 'awake', disposition: 'calm, grateful' } },
     reader: { location: 'apothecary' },
   },
 ];
+
+function act3For(ending) {
+  return ending === 'halden_reconciled' ? ACT_3_WITH_HALDEN : ACT_3;
+}
 
 async function loadStory() {
   const storyManager = new StoryManager(path.join(ROOT, 'stories'), path.join(ROOT, 'prompts'));
@@ -112,7 +122,7 @@ for (const [ending, act2] of Object.entries(ACT_2_ROUTES)) {
     const config = storyManager.getStory('the-herbalists-choice').config;
     const svc = new NarrationService(storyManager, 'key', { llmClient: { call: async () => '' } });
 
-    const replies = [{}, ...ACT_1, ...act2, ...ACT_3];
+    const replies = [{}, ...ACT_1, ...act2, ...act3For(ending)];
     const { session, warnings, endedAtTurn } = play(svc, config, replies);
 
     assert.deepStrictEqual(warnings, []);
@@ -123,6 +133,34 @@ for (const [ending, act2] of Object.entries(ACT_2_ROUTES)) {
     assert.strictEqual(session.choice_history.length, 2);
   });
 }
+
+test('playthrough: the solo route ends without ever meeting Halden', async () => {
+  const storyManager = await loadStory();
+  const config = storyManager.getStory('the-herbalists-choice').config;
+  const svc = new NarrationService(storyManager, 'key', { llmClient: { call: async () => '' } });
+
+  const replies = [{}, ...ACT_1, ...ACT_2_ROUTES.solo_path, ...ACT_3];
+  const { session, warnings, endedAtTurn } = play(svc, config, replies);
+
+  assert.deepStrictEqual(warnings, []);
+  assert.strictEqual(session.story.flags.halden_encountered, false);
+  assert.strictEqual(session.story.flags.halden_reconciled, false);
+  assert.strictEqual(session.characters.elara.health, 'recovering');
+  assert.strictEqual(endedAtTurn, replies.length);
+  assert.ok(matchingVariants(session, config).includes('solo_path'));
+});
+
+test('story config: no ending requires halden_reconciled together with halden_encountered false', () => {
+  const config = require('../stories/the-herbalists-choice-config.json');
+  const required = config.end_conditions.all_required;
+  assert.ok(!required.some(cond => cond.flag === 'halden_reconciled'), 'end conditions must not require halden_reconciled for every ending');
+  for (const variant of config.ending_variants) {
+    const all = [...required, ...variant.conditions];
+    const needsMeeting = all.some(cond => cond.flag === 'halden_reconciled' && cond.value === true);
+    const needsNoMeeting = all.some(cond => cond.flag === 'halden_encountered' && cond.value === false);
+    assert.ok(!(needsMeeting && needsNoMeeting), `${variant.id} contradicts itself`);
+  }
+});
 
 test('playthrough: meeting Corwin during act 1 still reaches the corwin_involved ending', async () => {
   const storyManager = await loadStory();
