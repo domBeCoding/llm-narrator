@@ -7,6 +7,15 @@ class SessionManager {
     this.storyManager = storyManager;
   }
 
+  activePointerFile(userId) {
+    return path.join(this.sessionsDir, `active-${userId}.json`);
+  }
+
+  /** Remembers which session the user chose, so later messages go to it. */
+  async setActiveSession(userId, sessionNumber) {
+    await fs.writeFile(this.activePointerFile(userId), JSON.stringify({ sessionNumber }), 'utf8');
+  }
+
   async getNextSessionNumber(userId) {
     const files = await fs.readdir(this.sessionsDir);
     const userSessions = files.filter(f => f.startsWith(`session-${userId}-`) && f.endsWith('.json'));
@@ -48,6 +57,14 @@ class SessionManager {
   }
 
   async getActiveSession(userId) {
+    try {
+      const { sessionNumber } = JSON.parse(await fs.readFile(this.activePointerFile(userId), 'utf8'));
+      const chosen = await this.getSessionByNumber(userId, sessionNumber);
+      if (chosen) return chosen;
+    } catch (e) {
+      // No choice recorded, or it is unreadable: fall back to the newest.
+    }
+
     const sessions = await this.getUserSessions(userId);
     if (sessions.length === 0) return null;
 
@@ -84,6 +101,7 @@ class SessionManager {
     session.session.last_action_at = new Date().toISOString();
 
     await this.saveSession(userId, sessionNumber, session);
+    await this.setActiveSession(userId, sessionNumber);
 
     return { session, sessionNumber };
   }

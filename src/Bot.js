@@ -249,6 +249,8 @@ class Bot {
         return;
       }
 
+      await this.sessionManager.setActiveSession(user.id, sessionNumber);
+
       const story = this.storyManager.getStory(session.session.story_id);
 
       await interaction.update({
