@@ -227,17 +227,45 @@ test('validate: flags are one-way', () => {
   assert.match(reasonFor(rejected, 'story.flags.forest_entered'), /one-way/);
 });
 
-test('validate: plot beats must be known, new, and not from a later act', () => {
+test('validate: plot beats must be known, new, and at most one act ahead', () => {
   const session = freshSession();
   session.story.plot_beats_hit = ['elara_found_sick'];
   const { update, rejected } = validateStateUpdate(session, {
-    story: { plot_beats_hit: ['elara_found_sick', 'greymere_fever_identified', 'made_up_beat', 'obtain_moonpetal'] },
+    story: { plot_beats_hit: ['elara_found_sick', 'greymere_fever_identified', 'made_up_beat', 'elara_recovery'] },
   }, config);
 
   assert.deepStrictEqual(update.story.plot_beats_hit, ['greymere_fever_identified']);
   assert.strictEqual(rejected.length, 2);
   assert.match(rejected.find(r => r.value === '"made_up_beat"').reason, /unknown plot beat/);
-  assert.match(rejected.find(r => r.value === '"obtain_moonpetal"').reason, /act 2/);
+  assert.match(rejected.find(r => r.value === '"elara_recovery"').reason, /act 3 but the story is in act 1/);
+});
+
+test('validate: meeting Corwin in act 1 keeps the act 2 corwin_refusal beat', () => {
+  const svc = realService();
+  const session = freshSession();
+  assert.strictEqual(session.story.current_act, 1);
+
+  const { lines } = quietly(() => svc.applyStateUpdates(session, {
+    reader: { location: 'village_square' },
+    story: { plot_beats_hit: ['corwin_refusal'], flags: { corwin_encountered: true } },
+  }, 'n', 'I ask Corwin for permission to enter the forest'));
+
+  assert.deepStrictEqual(lines, []);
+  assert.deepStrictEqual(session.story.plot_beats_hit, ['corwin_refusal']);
+  assert.strictEqual(session.story.flags.corwin_encountered, true);
+  // The beat does not move the act on by itself.
+  assert.strictEqual(session.story.current_act, 1);
+});
+
+test('validate: act 3 beats are kept when hit during act 2', () => {
+  const session = freshSession();
+  session.story.current_act = 2;
+  const { update, rejected } = validateStateUpdate(session, {
+    story: { plot_beats_hit: ['elara_recovery', 'halden_elara_reunion'] },
+  }, config);
+
+  assert.deepStrictEqual(rejected, []);
+  assert.deepStrictEqual(update.story.plot_beats_hit, ['elara_recovery', 'halden_elara_reunion']);
 });
 
 test('validate: a later-act beat is allowed on the turn the act advances', () => {

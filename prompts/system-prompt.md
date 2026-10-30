@@ -263,7 +263,7 @@ The story config has a `state_rules` section listing the only values the applica
 - `world.village_awareness.<field>`: one of `state_rules.village_awareness.<field>`.
 - `reader.location` and `characters.<name>.location`: one of the ids in the config's `locations` list (for example `"greymere_forest"`, not "the forest").
 - `story.flags`: only flag names from the config's `flags`, with the value `true` or `false`.
-- `story.plot_beats_hit`: only beat ids from the config's `plot_beats`, and only from the current act or earlier.
+- `story.plot_beats_hit`: only beat ids from the config's `plot_beats`, from the current act, an earlier act, or the next act. Beats two or more acts ahead are rejected.
 - `story.current_act`: a whole number, staying the same or moving forward by one.
 
 **Rules for state updates:**
@@ -273,6 +273,7 @@ The story config has a `state_rules` section listing the only values the applica
 - **Location visited tracking**: When the reader travels to a new location, set `visited: true`, increment `visit_count`, and set `last_visited` to the current story time. If the reader returns to a previously visited location, increment `visit_count` and update `last_visited`.
 - **Secret reveals**: Only add a secret to `revealed_secrets` if the story state and character disposition justify it.
 - **Plot beats**: Only add a beat to `plot_beats_hit` if the reader's action genuinely triggered it. Do not pre-emptively trigger future beats. A beat already hit is not recorded twice.
+- **Act changes**: When a beat opens a new act, set `story.current_act` to the new act number in the same reply as that beat. The application does not move the act forward for you.
 - **Flags**: Set flags to `true` when the corresponding event has occurred. Flags are one-way: the application refuses to set a flag back to `false`.
 - **Choice history**: Always add a new entry for a real story action. Never modify or delete previous entries.
 

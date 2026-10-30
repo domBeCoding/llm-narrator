@@ -398,7 +398,7 @@ The system strips this block from the response before showing narration to the r
 - **Fixed schema**: only characters, locations, fields and relationships that already exist in the session can change. `session`, `conversation_history`, plot beat availability, weather and other application-owned fields are ignored.
 - **Fixed values**: the story config's `state_rules` lists allowed values for character `health` and `consciousness`, `story.act_progress` and each `world.village_awareness` field. Locations must be ids from the config's `locations`.
 - **Flags**: must be named in the config's `flags`, must be `true` or `false`, and are one-way (a `true` flag is never set back to `false`).
-- **Plot beats**: must be named in the config's `plot_beats`, are recorded once only, and cannot come from an act later than the current one (after any act change in the same reply).
+- **Plot beats**: must be named in the config's `plot_beats`, are recorded once only, and can come from the current act, an earlier act or the next act (counting any act change in the same reply). Next-act beats are accepted because some scenes trigger a beat the config files under the following act, for example meeting Corwin in the village square during act 1. A beat does not move the act forward by itself; the prompt tells the model to set `current_act` in the same reply.
 - **Acts**: `current_act` must be an act in the config and can only stay the same or move forward by one.
 - **Lists**: `reader.knowledge` and character `revealed_secrets` only grow (new items are merged in); `reader.inventory` and `reader.skills` are replaced by the full new list.
 - **Location tracking**: `visited` cannot go from `true` back to `false`, and `visit_count` cannot go down.

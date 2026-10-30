@@ -240,6 +240,10 @@ function validateStory(session, input, config, out) {
   }
 
   // Act first, so plot beats can be checked against the act after this turn.
+  // Beats from the next act are accepted too: scenes in one act can trigger a
+  // beat the config files under the next act (for example meeting Corwin in
+  // the village square during act 1). The act itself is not moved forward by a
+  // beat, because the config has no act exit conditions for the code to check.
   let resultingAct = current.current_act;
   if (input.current_act !== undefined) {
     const value = input.current_act;
@@ -307,8 +311,8 @@ function validateStory(session, input, config, out) {
           out.reject(path, beat, 'unknown plot beat');
           continue;
         }
-        if (Number.isInteger(act) && Number.isInteger(resultingAct) && act > resultingAct) {
-          out.reject(path, beat, `belongs to act ${act} but the story is in act ${resultingAct}`);
+        if (Number.isInteger(act) && Number.isInteger(resultingAct) && act > resultingAct + 1) {
+          out.reject(path, beat, `belongs to act ${act} but the story is in act ${resultingAct}; only beats up to the next act are accepted`);
           continue;
         }
       }
