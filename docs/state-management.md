@@ -530,7 +530,7 @@ Not all characters need all phases. A character with a simple arc might only hav
 ### Rules
 
 - Phases are **ordered** — they represent progression. A character does not go backward (e.g., from `final_encounter` back to `before_encounter`).
-- Conditions are **evaluated against the current session state** each turn. The system checks which phase's conditions are met and uses the corresponding state as a reference for expected character behavior.
+- Nothing in the code reads or evaluates phase conditions. The whole story config is sent to the AI as text in the prompt, so phases are guidance: the AI is expected to compare the conditions with the session state and keep the character consistent with the matching phase. A phase can carry an optional `note` with extra guidance for the AI, as Elara's `final_encounter` does for the Halden path.
 - Multiple conditions in a single phase must **all** be met for that phase to apply.
 - The `state` fields only need to include what's **relevant to this character's arc**. Not all session state fields are required.
 - Characters not yet encountered by the reader stay in `before_encounter` until their first interaction triggers a flag.
