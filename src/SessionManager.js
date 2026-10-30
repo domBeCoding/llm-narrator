@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const path = require('path');
+const { AsyncLocalStorage } = require('async_hooks');
 
 class SessionManager {
   constructor(sessionsDir, storyManager) {
@@ -7,6 +8,8 @@ class SessionManager {
     this.storyManager = storyManager;
     // userId -> tail of that user's queue of turns (see withUserLock).
     this.userQueues = new Map();
+    // The user ids whose lock the current async call chain already holds.
+    this.heldLocks = new AsyncLocalStorage();
   }
 
   /**
@@ -14,10 +17,21 @@ class SessionManager {
    * reader's turns (load, AI call, save) happen one at a time and a later
    * turn always starts from the state the earlier one saved. In-process only:
    * it does not hold across several bot processes.
+   *
+   * Nesting is safe: a call made from inside fn for the same user runs
+   * straight away instead of queueing behind the call it is part of, which
+   * would wait for itself forever. The catch: work that fn starts without
+   * awaiting, and that runs on after fn has finished, still counts as inside
+   * the lock, so always await nested calls.
    */
   withUserLock(userId, fn) {
+    const held = this.heldLocks.getStore();
+    if (held && held.has(userId)) {
+      return Promise.resolve().then(() => fn());
+    }
+
     const previous = this.userQueues.get(userId) || Promise.resolve();
-    const run = previous.then(() => fn());
+    const run = previous.then(() => this.heldLocks.run(new Set(held || []).add(userId), fn));
     const tail = run.catch(() => {});
     this.userQueues.set(userId, tail);
     tail.then(() => {

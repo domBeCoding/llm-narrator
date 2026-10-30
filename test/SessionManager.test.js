@@ -368,6 +368,57 @@ test('withUserLock: forgets a user once their queue is empty', async (t) => {
   assert.strictEqual(manager.userQueues.size, 0);
 });
 
+test('withUserLock: a nested call for the same user runs instead of deadlocking', async (t) => {
+  const { manager } = await makeManager(t);
+  const events = [];
+
+  const outer = manager.withUserLock('42', async () => {
+    events.push('outer start');
+    const inner = await manager.withUserLock('42', async () => {
+      events.push('inner');
+      return 'inner done';
+    });
+    events.push('outer end');
+    return inner;
+  });
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('deadlocked')), 500));
+
+  assert.strictEqual(await Promise.race([outer, timeout]), 'inner done');
+  assert.deepStrictEqual(events, ['outer start', 'inner', 'outer end']);
+});
+
+test('withUserLock: a nested call for another user still queues behind that user', async (t) => {
+  const { manager } = await makeManager(t);
+  const events = [];
+  let release;
+  const otherBusy = manager.withUserLock('7', () => new Promise(resolve => {
+    release = () => { events.push('7 first'); resolve(); };
+  }));
+
+  const outer = manager.withUserLock('42', async () => {
+    await manager.withUserLock('7', async () => events.push('7 nested'));
+  });
+  setTimeout(() => release(), 20);
+  await Promise.all([otherBusy, outer]);
+
+  assert.deepStrictEqual(events, ['7 first', '7 nested']);
+});
+
+test('withUserLock: a later call queues normally once a nested call has finished', async (t) => {
+  const { manager } = await makeManager(t);
+  const events = [];
+
+  const first = manager.withUserLock('42', async () => {
+    await manager.withUserLock('42', async () => events.push('nested'));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    events.push('first end');
+  });
+  const second = manager.withUserLock('42', async () => events.push('second'));
+  await Promise.all([first, second]);
+
+  assert.deepStrictEqual(events, ['nested', 'first end', 'second']);
+});
+
 // --- Known defects -----------------------------------------------------------
 
 test('BUG: getActiveSession returns a completed session, hiding an older active one', { todo: true }, async (t) => {
