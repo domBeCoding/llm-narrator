@@ -99,6 +99,8 @@ class NarrationService {
       session.conversation_history.push({ role: 'assistant', content: narration });
     }
 
+    this.appendChoiceHistory(session, stateUpdate, userAction);
+
     if (!stateUpdate) return;
 
     if (stateUpdate.characters) {
@@ -138,10 +140,26 @@ class NarrationService {
       }
     }
 
-    if (stateUpdate.choice_log) {
+  }
+
+  // The prompt asks for `choice_history`; older replies and the design doc use
+  // `choice_log`. Accept either, as a single entry or a list of entries. The
+  // turn number always comes from the code, never from the model.
+  appendChoiceHistory(session, stateUpdate, userAction) {
+    session.choice_history = session.choice_history || [];
+    const choiceData = stateUpdate && (stateUpdate.choice_history ?? stateUpdate.choice_log);
+    const entries = (Array.isArray(choiceData) ? choiceData : [choiceData])
+      .filter(entry => entry && typeof entry === 'object' && !Array.isArray(entry));
+
+    if (entries.length > 0) {
+      for (const entry of entries) {
+        session.choice_history.push({ ...entry, turn: session.session.turn_count });
+      }
+    } else if (userAction && session.session.turn_count > 1) {
       session.choice_history.push({
         turn: session.session.turn_count,
-        ...stateUpdate.choice_log
+        action: userAction,
+        consequence: 'State advanced without structured choice details.'
       });
     }
   }

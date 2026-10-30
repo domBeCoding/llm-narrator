@@ -248,6 +248,69 @@ test('applyStateUpdates: appends to choice history stamped with the new turn num
   });
 });
 
+test('applyStateUpdates: accepts the choice_history key the prompt asks for', () => {
+  const svc = new NarrationService(makeStoryManagerStub(), 'key');
+  const session = makeSession();
+
+  svc.applyStateUpdates(session, {
+    choice_history: { action: 'checked on Elara', consequence: 'found her feverish' },
+  }, 'n');
+
+  assert.deepStrictEqual(session.choice_history, [
+    { turn: 4, action: 'checked on Elara', consequence: 'found her feverish' },
+  ]);
+});
+
+test('applyStateUpdates: accepts a list of choice_history entries', () => {
+  const svc = new NarrationService(makeStoryManagerStub(), 'key');
+  const session = makeSession();
+
+  svc.applyStateUpdates(session, {
+    choice_history: [
+      { action: 'checked on Elara', consequence: 'found her feverish' },
+      { action: 'read the torn page', consequence: 'learned of moonpetal' },
+    ],
+  }, 'n');
+
+  assert.strictEqual(session.choice_history.length, 2);
+  assert.ok(session.choice_history.every(e => e.turn === 4));
+});
+
+test('applyStateUpdates: the code sets the choice turn number, not the model', () => {
+  const svc = new NarrationService(makeStoryManagerStub(), 'key');
+  const session = makeSession();
+
+  svc.applyStateUpdates(session, {
+    choice_history: { turn: 99, action: 'a', consequence: 'c' },
+  }, 'n');
+
+  assert.strictEqual(session.choice_history[0].turn, 4);
+});
+
+test('applyStateUpdates: appends a fallback choice entry when a real action has no structured choice', () => {
+  const svc = new NarrationService(makeStoryManagerStub(), 'key');
+  const session = makeSession();
+
+  svc.applyStateUpdates(session, null, 'The scene unfolds.', 'I check on Elara');
+
+  assert.deepStrictEqual(session.choice_history, [{
+    turn: 4,
+    action: 'I check on Elara',
+    consequence: 'State advanced without structured choice details.',
+  }]);
+});
+
+test('applyStateUpdates: no fallback choice entry on the opening turn or without an action', () => {
+  const svc = new NarrationService(makeStoryManagerStub(), 'key');
+  const opening = makeSession({ session: { turn_count: 0 } });
+  svc.applyStateUpdates(opening, {}, 'Opening narration.', 'Opening turn instruction');
+  assert.strictEqual(opening.choice_history.length, 0);
+
+  const noAction = makeSession();
+  svc.applyStateUpdates(noAction, {}, 'The scene unfolds.');
+  assert.strictEqual(noAction.choice_history.length, 0);
+});
+
 test('applyStateUpdates: appends user action and narration to conversation_history', () => {
   const svc = new NarrationService(makeStoryManagerStub(), 'key');
   const session = makeSession();
