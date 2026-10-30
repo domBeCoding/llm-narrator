@@ -55,6 +55,12 @@ const ACT_2_ROUTES = {
     { story: { plot_beats_hit: ['enter_forest'], flags: { forest_entered: true, corwin_involvement: true } }, reader: { location: 'greymere_forest' } },
     { story: { plot_beats_hit: ['obtain_moonpetal'], flags: { moonpetal_obtained: true } } },
   ],
+  // The reader meets Halden, is turned away, and finds the moonpetal alone.
+  halden_turned_away: [
+    { story: { plot_beats_hit: ['halden_encounter'], flags: { reader_left_apothecary: true, halden_encountered: true } }, reader: { location: 'haldens_cottage' }, characters: { halden: { disposition: 'curt, dismissive' } } },
+    { story: { plot_beats_hit: ['enter_forest'], flags: { forest_entered: true } }, reader: { location: 'greymere_forest' } },
+    { story: { plot_beats_hit: ['obtain_moonpetal'], flags: { moonpetal_obtained: true } } },
+  ],
 };
 
 // Act 3: the reader returns and Elara recovers. Only the Halden route has the
@@ -193,4 +199,19 @@ test('playthrough: no scripted route matches more than one ending', async () => 
     const matched = matchingVariants(session, config);
     assert.strictEqual(matched.length, 1, `${route} matched ${JSON.stringify(matched)}`);
   }
+});
+
+test('playthrough: a mixed Halden and Tomas route matches both of their endings, by design', async () => {
+  const storyManager = await loadStory();
+  const config = storyManager.getStory('the-herbalists-choice').config;
+  const svc = new NarrationService(storyManager, 'key', { llmClient: { call: async () => '' } });
+
+  const [tomasJoins] = ACT_2_ROUTES.tomas_helped;
+  const replies = [{}, ...ACT_1, tomasJoins, ...ACT_2_ROUTES.halden_reconciled, ...ACT_3_WITH_HALDEN];
+  const { warnings, session, endedAtTurn } = play(svc, config, replies);
+
+  assert.deepStrictEqual(warnings, []);
+  assert.strictEqual(endedAtTurn, replies.length);
+  // The concluding directive lets the AI weave a combination of endings.
+  assert.deepStrictEqual(matchingVariants(session, config), ['halden_reconciled', 'tomas_helped']);
 });

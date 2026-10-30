@@ -114,6 +114,16 @@
         {"flag": "corwin_involvement", "value": true}
       ],
       "description": "Corwin visits, grudgingly impressed. The forest ban is quietly relaxed. The village feels less afraid."
+    },
+    {
+      "id": "halden_turned_away",
+      "conditions": [
+        {"flag": "halden_encountered", "value": true},
+        {"flag": "halden_reconciled", "value": false},
+        {"flag": "tomas_involved", "value": false},
+        {"flag": "corwin_involvement", "value": false}
+      ],
+      "description": "The reader brings the moonpetal home without Halden. Elara recovers. When the reader mentions the cottage at the forest's edge, Elara goes quiet, then smiles sadly. 'She always was stubborn.' Halden's door stays shut, for now. The reader learns that some old wounds are not theirs to mend."
     }
   ],
 
