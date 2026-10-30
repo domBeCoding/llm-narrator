@@ -319,6 +319,37 @@ test('getUserSessions: does not list the active session record as a session', as
   assert.deepStrictEqual(sessions.map(s => s.sessionNumber), [1]);
 });
 
+for (const [label, recorded] of [
+  ['a string', '"1"'],
+  ['zero', '0'],
+  ['a negative number', '-1'],
+  ['a fraction', '1.5'],
+  ['a path', '"../session-7-1"'],
+  ['null', 'null'],
+]) {
+  test(`getActiveSession: falls back to the newest when the recorded number is ${label}`, async (t) => {
+    const { dir, manager } = await makeManager(t);
+    await writeSession(dir, '42', 1);
+    await writeSession(dir, '42', 2);
+    await fs.writeFile(path.join(dir, 'active-42.json'), `{"sessionNumber": ${recorded}}`, 'utf8');
+
+    const session = await manager.getActiveSession('42');
+
+    assert.strictEqual(session.session.session_id, 'session-42-2');
+  });
+}
+
+test('getActiveSession: falls back to the newest when the active session record is not JSON', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1);
+  await writeSession(dir, '42', 2);
+  await fs.writeFile(path.join(dir, 'active-42.json'), '{"sessionNum', 'utf8');
+
+  const session = await manager.getActiveSession('42');
+
+  assert.strictEqual(session.session.session_id, 'session-42-2');
+});
+
 // --- One turn at a time per reader ------------------------------------------
 
 test('withUserLock: runs one user\'s calls in order, one at a time', async (t) => {

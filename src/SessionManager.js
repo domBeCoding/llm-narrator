@@ -92,8 +92,12 @@ class SessionManager {
   async getActiveSession(userId) {
     try {
       const { sessionNumber } = JSON.parse(await fs.readFile(this.activePointerFile(userId), 'utf8'));
-      const chosen = await this.getSessionByNumber(userId, sessionNumber);
-      if (chosen) return chosen;
+      // Only a positive whole number names a session; anything else (a
+      // string, a fraction, a path) is ignored rather than used in a file name.
+      if (Number.isInteger(sessionNumber) && sessionNumber > 0) {
+        const chosen = await this.getSessionByNumber(userId, sessionNumber);
+        if (chosen) return chosen;
+      }
     } catch (e) {
       // No choice recorded, or it is unreadable: fall back to the newest.
     }
