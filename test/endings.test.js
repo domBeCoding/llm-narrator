@@ -129,7 +129,7 @@ for (const [ending, act2] of Object.entries(ACT_2_ROUTES)) {
     assert.strictEqual(endedAtTurn, replies.length, 'the ending should trigger on the final reply, not before');
     assert.strictEqual(session.story.current_act, 3);
     assert.strictEqual(session.characters.elara.health, 'recovering');
-    assert.ok(matchingVariants(session, config).includes(ending), `expected ${ending} to match`);
+    assert.deepStrictEqual(matchingVariants(session, config), [ending]);
     assert.strictEqual(session.choice_history.length, 2);
   });
 }
@@ -147,7 +147,7 @@ test('playthrough: the solo route ends without ever meeting Halden', async () =>
   assert.strictEqual(session.story.flags.halden_reconciled, false);
   assert.strictEqual(session.characters.elara.health, 'recovering');
   assert.strictEqual(endedAtTurn, replies.length);
-  assert.ok(matchingVariants(session, config).includes('solo_path'));
+  assert.deepStrictEqual(matchingVariants(session, config), ['solo_path']);
 });
 
 test('story config: no ending requires halden_reconciled together with halden_encountered false', () => {
@@ -174,5 +174,23 @@ test('playthrough: meeting Corwin during act 1 still reaches the corwin_involved
   assert.deepStrictEqual(warnings, []);
   assert.ok(session.story.plot_beats_hit.includes('corwin_refusal'));
   assert.strictEqual(endedAtTurn, replies.length);
-  assert.ok(matchingVariants(session, config).includes('corwin_involved'));
+  assert.deepStrictEqual(matchingVariants(session, config), ['corwin_involved']);
+});
+
+test('playthrough: no scripted route matches more than one ending', async () => {
+  const storyManager = await loadStory();
+  const config = storyManager.getStory('the-herbalists-choice').config;
+  const svc = new NarrationService(storyManager, 'key', { llmClient: { call: async () => '' } });
+
+  const [corwin, ...restOfCorwinAct2] = ACT_2_ROUTES.corwin_involved;
+  const routes = {
+    ...Object.fromEntries(Object.entries(ACT_2_ROUTES).map(([ending, act2]) => [ending, [{}, ...ACT_1, ...act2, ...act3For(ending)]])),
+    corwin_met_in_act_1: [{}, ACT_1[0], ACT_1[1], corwin, ACT_1[2], ...restOfCorwinAct2, ...ACT_3],
+  };
+
+  for (const [route, replies] of Object.entries(routes)) {
+    const { session } = play(svc, config, replies);
+    const matched = matchingVariants(session, config);
+    assert.strictEqual(matched.length, 1, `${route} matched ${JSON.stringify(matched)}`);
+  }
 });

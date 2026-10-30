@@ -103,7 +103,8 @@
       "id": "solo_path",
       "conditions": [
         {"flag": "halden_encountered", "value": false},
-        {"flag": "tomas_involved", "value": false}
+        {"flag": "tomas_involved", "value": false},
+        {"flag": "corwin_involvement", "value": false}
       ],
       "description": "The reader sits with Elara as she recovers. She looks at them with new respect. 'You don't need me to watch over you anymore.' The reader feels the bittersweet weight of growing up."
     },
