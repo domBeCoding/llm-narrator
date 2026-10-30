@@ -5,6 +5,34 @@ class SessionManager {
   constructor(sessionsDir, storyManager) {
     this.sessionsDir = sessionsDir;
     this.storyManager = storyManager;
+    // userId -> tail of that user's queue of turns (see withUserLock).
+    this.userQueues = new Map();
+  }
+
+  /**
+   * Runs fn after every earlier call for the same user has finished, so one
+   * reader's turns (load, AI call, save) happen one at a time and a later
+   * turn always starts from the state the earlier one saved. In-process only:
+   * it does not hold across several bot processes.
+   */
+  withUserLock(userId, fn) {
+    const previous = this.userQueues.get(userId) || Promise.resolve();
+    const run = previous.then(() => fn());
+    const tail = run.catch(() => {});
+    this.userQueues.set(userId, tail);
+    tail.then(() => {
+      if (this.userQueues.get(userId) === tail) this.userQueues.delete(userId);
+    });
+    return run;
+  }
+
+  activePointerFile(userId) {
+    return path.join(this.sessionsDir, `active-${userId}.json`);
+  }
+
+  /** Remembers which session the user chose, so later messages go to it. */
+  async setActiveSession(userId, sessionNumber) {
+    await fs.writeFile(this.activePointerFile(userId), JSON.stringify({ sessionNumber }), 'utf8');
   }
 
   async getNextSessionNumber(userId) {
@@ -48,6 +76,14 @@ class SessionManager {
   }
 
   async getActiveSession(userId) {
+    try {
+      const { sessionNumber } = JSON.parse(await fs.readFile(this.activePointerFile(userId), 'utf8'));
+      const chosen = await this.getSessionByNumber(userId, sessionNumber);
+      if (chosen) return chosen;
+    } catch (e) {
+      // No choice recorded, or it is unreadable: fall back to the newest.
+    }
+
     const sessions = await this.getUserSessions(userId);
     if (sessions.length === 0) return null;
 
@@ -84,6 +120,7 @@ class SessionManager {
     session.session.last_action_at = new Date().toISOString();
 
     await this.saveSession(userId, sessionNumber, session);
+    await this.setActiveSession(userId, sessionNumber);
 
     return { session, sessionNumber };
   }

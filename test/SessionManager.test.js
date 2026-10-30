@@ -246,6 +246,128 @@ test('deleteSession: is a no-op for a missing file', async (t) => {
   await assert.doesNotReject(() => manager.deleteSession('42', 99));
 });
 
+// --- Choosing a session to continue -----------------------------------------
+
+test('setActiveSession: getActiveSession returns the chosen session, not the newest', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1);
+  await writeSession(dir, '42', 2);
+
+  await manager.setActiveSession('42', 1);
+  const session = await manager.getActiveSession('42');
+
+  assert.strictEqual(session.session.session_id, 'session-42-1');
+});
+
+test('setActiveSession: the choice is kept on disk, so a new manager sees it', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1);
+  await writeSession(dir, '42', 2);
+  await manager.setActiveSession('42', 1);
+
+  const afterRestart = new SessionManager(dir, storyManagerStub);
+  const session = await afterRestart.getActiveSession('42');
+
+  assert.strictEqual(session.session.session_id, 'session-42-1');
+});
+
+test('setActiveSession: the choice is per user', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1);
+  await writeSession(dir, '42', 2);
+  await writeSession(dir, '7', 1);
+  await writeSession(dir, '7', 2);
+  await manager.setActiveSession('42', 1);
+
+  const other = await manager.getActiveSession('7');
+
+  assert.strictEqual(other.session.session_id, 'session-7-2');
+});
+
+test('getActiveSession: falls back to the newest when the chosen session is gone', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1);
+  await writeSession(dir, '42', 2);
+  await manager.setActiveSession('42', 1);
+  await manager.deleteSession('42', 1);
+
+  const session = await manager.getActiveSession('42');
+
+  assert.strictEqual(session.session.session_id, 'session-42-2');
+});
+
+test('createSession: a new game becomes the active session even after continuing an older one', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1);
+  await writeSession(dir, '42', 2);
+  await manager.setActiveSession('42', 1);
+
+  const { sessionNumber } = await manager.createSession('42', 'dom', 'the-herbalists-choice');
+  const session = await manager.getActiveSession('42');
+
+  assert.strictEqual(sessionNumber, 3);
+  assert.strictEqual(session.session.session_id, 'session-42-3');
+});
+
+test('getUserSessions: does not list the active session record as a session', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1);
+  await manager.setActiveSession('42', 1);
+
+  const sessions = await manager.getUserSessions('42');
+
+  assert.deepStrictEqual(sessions.map(s => s.sessionNumber), [1]);
+});
+
+// --- One turn at a time per reader ------------------------------------------
+
+test('withUserLock: runs one user\'s calls in order, one at a time', async (t) => {
+  const { manager } = await makeManager(t);
+  const events = [];
+  const step = (name, ms) => async () => {
+    events.push(`${name} start`);
+    await new Promise(resolve => setTimeout(resolve, ms));
+    events.push(`${name} end`);
+    return name;
+  };
+
+  const results = await Promise.all([
+    manager.withUserLock('42', step('a', 30)),
+    manager.withUserLock('42', step('b', 0)),
+  ]);
+
+  assert.deepStrictEqual(results, ['a', 'b']);
+  assert.deepStrictEqual(events, ['a start', 'a end', 'b start', 'b end']);
+});
+
+test('withUserLock: a failed call is passed back and does not block the next one', async (t) => {
+  const { manager } = await makeManager(t);
+
+  const failed = manager.withUserLock('42', async () => { throw new Error('boom'); });
+  const next = manager.withUserLock('42', async () => 'ok');
+
+  await assert.rejects(failed, /boom/);
+  assert.strictEqual(await next, 'ok');
+});
+
+test('withUserLock: different users do not wait for each other', async (t) => {
+  const { manager } = await makeManager(t);
+  let release;
+  const slow = manager.withUserLock('42', () => new Promise(resolve => { release = resolve; }));
+
+  assert.strictEqual(await manager.withUserLock('7', async () => 'other'), 'other');
+  release();
+  await slow;
+});
+
+test('withUserLock: forgets a user once their queue is empty', async (t) => {
+  const { manager } = await makeManager(t);
+  await manager.withUserLock('42', async () => {});
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.strictEqual(manager.userQueues.size, 0);
+});
+
 // --- Known defects -----------------------------------------------------------
 
 test('BUG: getActiveSession returns a completed session, hiding an older active one', { todo: true }, async (t) => {

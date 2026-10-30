@@ -198,7 +198,7 @@ class Bot {
         return;
       }
 
-      const { session, sessionNumber } = await this.sessionManager.createSession(user.id, user.username, storyId);
+      const { session: created, sessionNumber } = await this.sessionManager.createSession(user.id, user.username, storyId);
 
       await interaction.update({
         content: `🎮 **${story.title}** — Session ${sessionNumber}\n\n*Generating your opening scene...*`,
@@ -206,36 +206,41 @@ class Bot {
         components: []
       });
 
-      try {
-        const openingAction = story.openingAction
-          || 'This is the opening turn. Set the scene where the story begins, introduce the reader to their surroundings, and establish the situation that sets the story in motion.';
-        const prompt = this.narrationService.buildPrompt(session, openingAction);
-        const response = await this.narrationService.callLLM(prompt, session);
-        const { narration, stateUpdate } = this.narrationService.parseResponse(response);
+      // Run the opening as one of this reader's turns, starting from the saved
+      // file in case one of their messages got in first.
+      await this.sessionManager.withUserLock(user.id, async () => {
+        try {
+          const openingAction = story.openingAction
+            || 'This is the opening turn. Set the scene where the story begins, introduce the reader to their surroundings, and establish the situation that sets the story in motion.';
+          const session = (await this.sessionManager.getSessionByNumber(user.id, sessionNumber)) || created;
+          const prompt = this.narrationService.buildPrompt(session, openingAction);
+          const response = await this.narrationService.callLLM(prompt, session);
+          const { narration, stateUpdate } = this.narrationService.parseResponse(response);
 
-        this.narrationService.applyStateUpdates(session, stateUpdate, narration, openingAction);
+          this.narrationService.applyStateUpdates(session, stateUpdate, narration, openingAction);
 
-        if (this.narrationService.evaluateEndConditions(session, story.config)) {
-          session.session.status = 'concluding';
+          if (this.narrationService.evaluateEndConditions(session, story.config)) {
+            session.session.status = 'concluding';
+          }
+
+          await this.sessionManager.saveSession(user.id, sessionNumber, session);
+
+          const chunks = this.discordUI.splitMessage(narration);
+          for (const chunk of chunks) {
+            await interaction.followUp({ content: chunk });
+          }
+
+          await interaction.channel.send({
+            content: `🎮 <@${user.id}> has started **${story.title}** (Session ${sessionNumber})!`
+          });
+
+        } catch (error) {
+          console.error('Error generating opening narration:', error);
+          await interaction.followUp({
+            content: `🎮 **${story.title}** — Session ${sessionNumber}\n\n${story.description}\n\n*${story.genre} • ${story.estimatedPlayTime}*\n\n---\n\nTo begin, @mention me with your first action. For example:\n\`@NarratorBot I look around the room\``
+          });
         }
-
-        await this.sessionManager.saveSession(user.id, sessionNumber, session);
-
-        const chunks = this.discordUI.splitMessage(narration);
-        for (const chunk of chunks) {
-          await interaction.followUp({ content: chunk });
-        }
-
-        await interaction.channel.send({
-          content: `🎮 <@${user.id}> has started **${story.title}** (Session ${sessionNumber})!`
-        });
-
-      } catch (error) {
-        console.error('Error generating opening narration:', error);
-        await interaction.followUp({
-          content: `🎮 **${story.title}** — Session ${sessionNumber}\n\n${story.description}\n\n*${story.genre} • ${story.estimatedPlayTime}*\n\n---\n\nTo begin, @mention me with your first action. For example:\n\`@NarratorBot I look around the room\``
-        });
-      }
+      });
 
     } else if (customId.startsWith('load_session_')) {
       const sessionNumber = parseInt(customId.replace('load_session_', ''));
@@ -248,6 +253,8 @@ class Bot {
         });
         return;
       }
+
+      await this.sessionManager.setActiveSession(user.id, sessionNumber);
 
       const story = this.storyManager.getStory(session.session.story_id);
 
@@ -303,55 +310,60 @@ class Bot {
       console.error('Failed to add reaction:', reactError);
     }
 
-    try {
-      await message.channel.sendTyping();
-      console.log(`[DEBUG] Processing action from ${username}: ${userAction}`);
+    // One turn at a time per reader: each turn loads, calls the AI and saves
+    // before the next starts, so a quick second message cannot overwrite the
+    // first one's save.
+    await this.sessionManager.withUserLock(userId, async () => {
+      try {
+        await message.channel.sendTyping();
+        console.log(`[DEBUG] Processing action from ${username}: ${userAction}`);
 
-      const session = await this.sessionManager.getActiveSession(userId);
+        const session = await this.sessionManager.getActiveSession(userId);
 
-      if (!session) {
-        await message.reply('You don\'t have an active game. Use `/start` to begin a new story!');
-        return;
+        if (!session) {
+          await message.reply('You don\'t have an active game. Use `/start` to begin a new story!');
+          return;
+        }
+
+        if (session.session.status === 'completed') {
+          await message.reply('This story has already been completed. Use `/restart` to play again!');
+          return;
+        }
+
+        const story = this.storyManager.getStory(session.session.story_id);
+
+        console.log('[DEBUG] Building prompt...');
+        const prompt = this.narrationService.buildPrompt(session, userAction);
+        console.log('[DEBUG] Calling LLM API...');
+        const response = await this.narrationService.callLLM(prompt, session);
+        console.log('[DEBUG] LLM response received');
+
+        const { narration, stateUpdate } = this.narrationService.parseResponse(response);
+        console.log('[DEBUG] Narration length:', narration.length);
+
+        this.narrationService.applyStateUpdates(session, stateUpdate, narration, userAction);
+
+        if (session.session.status === 'concluding') {
+          session.session.status = 'completed';
+          console.log('[DEBUG] Story concluded, setting status to completed');
+        } else if (this.narrationService.evaluateEndConditions(session, story.config)) {
+          session.session.status = 'concluding';
+          console.log('[DEBUG] End conditions met, setting status to concluding');
+        }
+
+        const sessionNumber = parseInt(session.session.session_id.split('-').pop());
+        await this.sessionManager.saveSession(userId, sessionNumber, session);
+
+        const chunks = this.discordUI.splitMessage(narration);
+        for (const chunk of chunks) {
+          await message.reply(chunk);
+        }
+
+      } catch (error) {
+        console.error('Error handling message:', error);
+        await message.reply('Sorry, something went wrong. Please try again.');
       }
-
-      if (session.session.status === 'completed') {
-        await message.reply('This story has already been completed. Use `/restart` to play again!');
-        return;
-      }
-
-      const story = this.storyManager.getStory(session.session.story_id);
-
-      console.log('[DEBUG] Building prompt...');
-      const prompt = this.narrationService.buildPrompt(session, userAction);
-      console.log('[DEBUG] Calling LLM API...');
-      const response = await this.narrationService.callLLM(prompt, session);
-      console.log('[DEBUG] LLM response received');
-
-      const { narration, stateUpdate } = this.narrationService.parseResponse(response);
-      console.log('[DEBUG] Narration length:', narration.length);
-
-      this.narrationService.applyStateUpdates(session, stateUpdate, narration, userAction);
-
-      if (session.session.status === 'concluding') {
-        session.session.status = 'completed';
-        console.log('[DEBUG] Story concluded, setting status to completed');
-      } else if (this.narrationService.evaluateEndConditions(session, story.config)) {
-        session.session.status = 'concluding';
-        console.log('[DEBUG] End conditions met, setting status to concluding');
-      }
-
-      const sessionNumber = parseInt(session.session.session_id.split('-').pop());
-      await this.sessionManager.saveSession(userId, sessionNumber, session);
-
-      const chunks = this.discordUI.splitMessage(narration);
-      for (const chunk of chunks) {
-        await message.reply(chunk);
-      }
-
-    } catch (error) {
-      console.error('Error handling message:', error);
-      await message.reply('Sorry, something went wrong. Please try again.');
-    }
+    });
   }
 }
 
