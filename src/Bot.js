@@ -19,6 +19,8 @@ class Bot {
     });
 
     this.discordToken = null;
+    // userId -> number of new games clicked but not yet created.
+    this.pendingNewGames = new Map();
     this._setupEventHandlers();
   }
 
@@ -183,6 +185,12 @@ class Bot {
     }
   }
 
+  markNewGamePending(userId, change) {
+    const count = (this.pendingNewGames.get(userId) || 0) + change;
+    if (count > 0) this.pendingNewGames.set(userId, count);
+    else this.pendingNewGames.delete(userId);
+  }
+
   async handleButtonInteraction(interaction) {
     const { customId, user } = interaction;
 
@@ -198,21 +206,34 @@ class Bot {
         return;
       }
 
-      const { session: created, sessionNumber } = await this.sessionManager.createSession(user.id, user.username, storyId);
+      // Creating the game and playing its opening is one of this reader's
+      // turns, so two clicks cannot both take the same session number and no
+      // message can be played in the new game before its opening. Messages
+      // that arrive while it is pending wait for it and go to the new game.
+      // The click is acknowledged first, because the queue may be busy for
+      // longer than Discord waits for a reply.
+      this.markNewGamePending(user.id, 1);
+      const acknowledged = interaction.deferUpdate();
+      acknowledged.catch(() => {});
 
-      await interaction.update({
-        content: `🎮 **${story.title}** — Session ${sessionNumber}\n\n*Generating your opening scene...*`,
-        embeds: [],
-        components: []
-      });
-
-      // Run the opening as one of this reader's turns, starting from the saved
-      // file in case one of their messages got in first.
       await this.sessionManager.withUserLock(user.id, async () => {
+        let session, sessionNumber;
+        try {
+          ({ session, sessionNumber } = await this.sessionManager.createSession(user.id, user.username, storyId));
+        } finally {
+          this.markNewGamePending(user.id, -1);
+        }
+
+        await acknowledged;
+        await interaction.editReply({
+          content: `🎮 **${story.title}** — Session ${sessionNumber}\n\n*Generating your opening scene...*`,
+          embeds: [],
+          components: []
+        });
+
         try {
           const openingAction = story.openingAction
             || 'This is the opening turn. Set the scene where the story begins, introduce the reader to their surroundings, and establish the situation that sets the story in motion.';
-          const session = (await this.sessionManager.getSessionByNumber(user.id, sessionNumber)) || created;
           const prompt = this.narrationService.buildPrompt(session, openingAction);
           const response = await this.narrationService.callLLM(prompt, session);
           const { narration, stateUpdate } = this.narrationService.parseResponse(response);
@@ -306,8 +327,11 @@ class Bot {
 
     // Work out which session this message is for now, as it arrives, so a
     // switch the reader makes while it waits in the queue cannot move it.
-    const target = this.sessionManager.getActiveSessionNumber(userId);
-    target.catch(() => {});
+    // If a new game is being set up, the message is for that game instead.
+    const target = this.pendingNewGames.has(userId)
+      ? null
+      : this.sessionManager.getActiveSessionNumber(userId);
+    if (target) target.catch(() => {});
 
     // One turn at a time per reader: each turn loads, calls the AI and saves
     // before the next starts, so a quick second message cannot overwrite the
@@ -318,7 +342,7 @@ class Bot {
         await message.channel.sendTyping();
         console.log(`[DEBUG] Processing action from ${username}: ${userAction}`);
 
-        const sessionNumber = await target;
+        const sessionNumber = target ? await target : await this.sessionManager.getActiveSessionNumber(userId);
         const session = sessionNumber === null
           ? null
           : await this.sessionManager.getSessionByNumber(userId, sessionNumber);
