@@ -41,7 +41,9 @@ async function makeBot(t, { sessions = [1], delays = {} } = {}) {
     await fs.writeFile(path.join(dir, `session-${USER_ID}-${n}.json`), JSON.stringify(makeSession(n)), 'utf8');
   }
 
-  const storyManager = { getStory: () => ({ title: 'The Herbalist\'s Choice', config: {} }) };
+  await fs.writeFile(path.join(dir, 'session-template.json'), JSON.stringify(makeSession(0)), 'utf8');
+
+  const storyManager = { getStory: () => ({ title: 'The Herbalist\'s Choice', openingAction: 'OPENING', config: {} }) };
   const sessionManager = new SessionManager(dir, storyManager);
   const prompted = [];
   const narrationService = {
@@ -102,4 +104,53 @@ test('continuing a previous session sends later messages to that session', async
   assert.deepStrictEqual(prompted.map(p => p.sessionId), ['session-42-1', 'session-42-1']);
   assert.strictEqual((await readSaved(1)).session.turn_count, 2);
   assert.strictEqual((await readSaved(2)).session.turn_count, 0, 'the newest session is left alone');
+});
+
+test('two quick messages from the same reader both reach the save', async (t) => {
+  // The first reply is slower than the second, so without one-at-a-time turns
+  // both start from turn 0 and the first save overwrites the second.
+  const { bot, readSaved } = await makeBot(t, { delays: { 'I open the door': 50, 'I step inside': 0 } });
+
+  await Promise.all([
+    bot.handleMessage(fakeMessage('I open the door')),
+    bot.handleMessage(fakeMessage('I step inside')),
+  ]);
+
+  const saved = await readSaved(1);
+  assert.strictEqual(saved.session.turn_count, 2);
+  assert.deepStrictEqual(saved.choice_history, ['I open the door', 'I step inside']);
+});
+
+test('one reader\'s slow turn does not hold up another reader', async (t) => {
+  const { bot, dir, readSaved } = await makeBot(t, { delays: { 'I open the door': 200 } });
+  const other = makeSession(1);
+  other.session.session_id = 'session-7-1';
+  other.session.user_id = '7';
+  await fs.writeFile(path.join(dir, 'session-7-1.json'), JSON.stringify(other), 'utf8');
+
+  const otherMessage = fakeMessage('I wave');
+  otherMessage.author = { bot: false, id: '7', username: 'other' };
+
+  const slow = bot.handleMessage(fakeMessage('I open the door'));
+  const started = Date.now();
+  await bot.handleMessage(otherMessage);
+  assert.ok(Date.now() - started < 150, 'the other reader was not queued behind the slow turn');
+  await slow;
+  assert.strictEqual((await readSaved(1)).session.turn_count, 1);
+});
+
+test('a message sent while the opening scene is generating waits for it and both are saved', async (t) => {
+  const { bot, readSaved } = await makeBot(t, { sessions: [], delays: { OPENING: 50 } });
+  const button = fakeButton('start_story_the-herbalists-choice');
+  button.followUp = async () => {};
+  button.channel = { send: async () => {} };
+
+  const opening = bot.handleButtonInteraction(button);
+  // Let the session be created and the opening start before the reader speaks.
+  await new Promise(resolve => setTimeout(resolve, 10));
+  await Promise.all([opening, bot.handleMessage(fakeMessage('I look around'))]);
+
+  const saved = await readSaved(1);
+  assert.deepStrictEqual(saved.choice_history, ['OPENING', 'I look around']);
+  assert.strictEqual(saved.session.turn_count, 2);
 });

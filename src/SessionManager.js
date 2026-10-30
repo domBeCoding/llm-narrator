@@ -5,6 +5,25 @@ class SessionManager {
   constructor(sessionsDir, storyManager) {
     this.sessionsDir = sessionsDir;
     this.storyManager = storyManager;
+    // userId -> tail of that user's queue of turns (see withUserLock).
+    this.userQueues = new Map();
+  }
+
+  /**
+   * Runs fn after every earlier call for the same user has finished, so one
+   * reader's turns (load, AI call, save) happen one at a time and a later
+   * turn always starts from the state the earlier one saved. In-process only:
+   * it does not hold across several bot processes.
+   */
+  withUserLock(userId, fn) {
+    const previous = this.userQueues.get(userId) || Promise.resolve();
+    const run = previous.then(() => fn());
+    const tail = run.catch(() => {});
+    this.userQueues.set(userId, tail);
+    tail.then(() => {
+      if (this.userQueues.get(userId) === tail) this.userQueues.delete(userId);
+    });
+    return run;
   }
 
   activePointerFile(userId) {
