@@ -86,12 +86,19 @@ function fakeMessage(action) {
 }
 
 function fakeButton(customId) {
-  return {
+  const button = {
     customId,
     user: { id: USER_ID, username: 'reader' },
+    edits: [],
+    followUps: [],
     reply: async () => {},
     update: async () => {},
+    deferUpdate: async () => {},
+    editReply: async (content) => { button.edits.push(content); },
+    followUp: async (content) => { button.followUps.push(content); },
+    channel: { send: async () => {} },
   };
+  return button;
 }
 
 test('continuing a previous session sends later messages to that session', async (t) => {
@@ -142,8 +149,6 @@ test('one reader\'s slow turn does not hold up another reader', async (t) => {
 test('a message sent while the opening scene is generating waits for it and both are saved', async (t) => {
   const { bot, readSaved } = await makeBot(t, { sessions: [], delays: { OPENING: 50 } });
   const button = fakeButton('start_story_the-herbalists-choice');
-  button.followUp = async () => {};
-  button.channel = { send: async () => {} };
 
   const opening = bot.handleButtonInteraction(button);
   // Let the session be created and the opening start before the reader speaks.
@@ -153,4 +158,95 @@ test('a message sent while the opening scene is generating waits for it and both
   const saved = await readSaved(1);
   assert.deepStrictEqual(saved.choice_history, ['OPENING', 'I look around']);
   assert.strictEqual(saved.session.turn_count, 2);
+});
+
+test('a message sent before the reader switches session stays with the session it was sent to', async (t) => {
+  // Message A is slow. Message B arrives while A is still playing, so it waits
+  // in the queue. The reader then switches to session 2 before B's turn starts.
+  const { bot, prompted, readSaved } = await makeBot(t, { sessions: [1, 2], delays: { 'I open the door': 50 } });
+  await bot.sessionManager.setActiveSession(USER_ID, 1);
+
+  const a = bot.handleMessage(fakeMessage('I open the door'));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const b = bot.handleMessage(fakeMessage('I step inside'));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  await bot.handleButtonInteraction(fakeButton('load_session_2'));
+  await Promise.all([a, b]);
+
+  assert.deepStrictEqual(prompted.map(p => [p.action, p.sessionId]), [
+    ['I open the door', 'session-42-1'],
+    ['I step inside', 'session-42-1'],
+  ]);
+  assert.deepStrictEqual((await readSaved(1)).choice_history, ['I open the door', 'I step inside']);
+  assert.deepStrictEqual((await readSaved(2)).choice_history, []);
+
+  // Messages sent after the switch go to session 2.
+  await bot.handleMessage(fakeMessage('I wave'));
+  assert.deepStrictEqual((await readSaved(2)).choice_history, ['I wave']);
+});
+
+test('messages from one reader are played in the order they arrived', async (t) => {
+  const { bot, readSaved } = await makeBot(t);
+  const actions = ['one', 'two', 'three', 'four', 'five'].map(w => `I count ${w}`);
+
+  await Promise.all(actions.map(action => bot.handleMessage(fakeMessage(action))));
+
+  assert.deepStrictEqual((await readSaved(1)).choice_history, actions);
+});
+
+// Discord answers each call after a short delay, as a real API call would.
+function slowDiscord(button, ms) {
+  for (const name of ['update', 'deferUpdate', 'editReply']) {
+    const original = button[name];
+    button[name] = async (...args) => {
+      await new Promise(resolve => setTimeout(resolve, ms));
+      return original(...args);
+    };
+  }
+  return button;
+}
+
+test('a message sent just after clicking new game is played after the opening, in the new game', async (t) => {
+  const { bot, prompted, readSaved } = await makeBot(t, { sessions: [1] });
+  await bot.sessionManager.setActiveSession(USER_ID, 1);
+
+  const opening = bot.handleButtonInteraction(slowDiscord(fakeButton('start_story_the-herbalists-choice'), 30));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  await Promise.all([opening, bot.handleMessage(fakeMessage('I look around'))]);
+
+  assert.deepStrictEqual(prompted.map(p => [p.action, p.sessionId]), [
+    ['OPENING', 'session-42-2'],
+    ['I look around', 'session-42-2'],
+  ]);
+  assert.deepStrictEqual((await readSaved(2)).choice_history, ['OPENING', 'I look around']);
+  assert.deepStrictEqual((await readSaved(1)).choice_history, []);
+});
+
+test('double-clicking new game creates two games with different session numbers', async (t) => {
+  const { bot, prompted, readSaved } = await makeBot(t, { sessions: [] });
+  const first = fakeButton('start_story_the-herbalists-choice');
+  const second = fakeButton('start_story_the-herbalists-choice');
+
+  await Promise.all([bot.handleButtonInteraction(first), bot.handleButtonInteraction(second)]);
+
+  assert.deepStrictEqual(prompted.map(p => p.sessionId), ['session-42-1', 'session-42-2']);
+  assert.deepStrictEqual((await readSaved(1)).choice_history, ['OPENING']);
+  assert.deepStrictEqual((await readSaved(2)).choice_history, ['OPENING']);
+  assert.match(first.edits[0].content, /Session 1\b/);
+  assert.match(second.edits[0].content, /Session 2\b/);
+  assert.strictEqual(bot.pendingNewGames.size, 0);
+});
+
+test('a new game started behind a slow turn acknowledges the click straight away', async (t) => {
+  const { bot } = await makeBot(t, { sessions: [1], delays: { 'I open the door': 100 } });
+  const button = fakeButton('start_story_the-herbalists-choice');
+  let acknowledgedAt = null;
+  button.deferUpdate = async () => { acknowledgedAt = Date.now(); };
+
+  const slow = bot.handleMessage(fakeMessage('I open the door'));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const clickedAt = Date.now();
+  await Promise.all([slow, bot.handleButtonInteraction(button)]);
+
+  assert.ok(acknowledgedAt !== null && acknowledgedAt - clickedAt < 50, 'the click was acknowledged before the queue freed up');
 });

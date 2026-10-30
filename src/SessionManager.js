@@ -1,5 +1,7 @@
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
+const { AsyncLocalStorage } = require('async_hooks');
 
 class SessionManager {
   constructor(sessionsDir, storyManager) {
@@ -7,6 +9,8 @@ class SessionManager {
     this.storyManager = storyManager;
     // userId -> tail of that user's queue of turns (see withUserLock).
     this.userQueues = new Map();
+    // The user ids whose lock the current async call chain already holds.
+    this.heldLocks = new AsyncLocalStorage();
   }
 
   /**
@@ -14,10 +18,21 @@ class SessionManager {
    * reader's turns (load, AI call, save) happen one at a time and a later
    * turn always starts from the state the earlier one saved. In-process only:
    * it does not hold across several bot processes.
+   *
+   * Nesting is safe: a call made from inside fn for the same user runs
+   * straight away instead of queueing behind the call it is part of, which
+   * would wait for itself forever. The catch: work that fn starts without
+   * awaiting, and that runs on after fn has finished, still counts as inside
+   * the lock, so always await nested calls.
    */
   withUserLock(userId, fn) {
+    const held = this.heldLocks.getStore();
+    if (held && held.has(userId)) {
+      return Promise.resolve().then(() => fn());
+    }
+
     const previous = this.userQueues.get(userId) || Promise.resolve();
-    const run = previous.then(() => fn());
+    const run = previous.then(() => this.heldLocks.run(new Set(held || []).add(userId), fn));
     const tail = run.catch(() => {});
     this.userQueues.set(userId, tail);
     tail.then(() => {
@@ -30,9 +45,22 @@ class SessionManager {
     return path.join(this.sessionsDir, `active-${userId}.json`);
   }
 
-  /** Remembers which session the user chose, so later messages go to it. */
+  /**
+   * Remembers which session the user chose, so later messages go to it. The
+   * record is written to a temporary file in the same folder and then renamed
+   * over the old one, so a reader never sees a half-written record.
+   */
   async setActiveSession(userId, sessionNumber) {
-    await fs.writeFile(this.activePointerFile(userId), JSON.stringify({ sessionNumber }), 'utf8');
+    const target = this.activePointerFile(userId);
+    // Ends in .json so it matches the same git-ignore rule as the record.
+    const temp = path.join(this.sessionsDir, `active-${userId}.tmp-${process.pid}-${crypto.randomUUID()}.json`);
+    try {
+      await fs.writeFile(temp, JSON.stringify({ sessionNumber }), 'utf8');
+      await fs.rename(temp, target);
+    } catch (e) {
+      await fs.rm(temp, { force: true });
+      throw e;
+    }
   }
 
   async getNextSessionNumber(userId) {
@@ -75,21 +103,30 @@ class SessionManager {
     return sessions.sort((a, b) => b.sessionNumber - a.sessionNumber);
   }
 
-  async getActiveSession(userId) {
+  /**
+   * The number of the session the user's messages go to: the one they chose,
+   * or the newest if there is no valid choice. Null if they have no sessions.
+   */
+  async getActiveSessionNumber(userId) {
     try {
       const { sessionNumber } = JSON.parse(await fs.readFile(this.activePointerFile(userId), 'utf8'));
-      const chosen = await this.getSessionByNumber(userId, sessionNumber);
-      if (chosen) return chosen;
+      // Only a positive whole number names a session; anything else (a
+      // string, a fraction, a path) is ignored rather than used in a file name.
+      if (Number.isInteger(sessionNumber) && sessionNumber > 0
+        && await this.getSessionByNumber(userId, sessionNumber)) {
+        return sessionNumber;
+      }
     } catch (e) {
       // No choice recorded, or it is unreadable: fall back to the newest.
     }
 
     const sessions = await this.getUserSessions(userId);
-    if (sessions.length === 0) return null;
+    return sessions.length === 0 ? null : sessions[0].sessionNumber;
+  }
 
-    const latest = sessions[0];
-    const data = await fs.readFile(path.join(this.sessionsDir, latest.file), 'utf8');
-    return JSON.parse(data);
+  async getActiveSession(userId) {
+    const sessionNumber = await this.getActiveSessionNumber(userId);
+    return sessionNumber === null ? null : this.getSessionByNumber(userId, sessionNumber);
   }
 
   async getSessionByNumber(userId, sessionNumber) {

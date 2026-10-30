@@ -19,6 +19,8 @@ class Bot {
     });
 
     this.discordToken = null;
+    // userId -> number of new games clicked but not yet created.
+    this.pendingNewGames = new Map();
     this._setupEventHandlers();
   }
 
@@ -183,6 +185,12 @@ class Bot {
     }
   }
 
+  markNewGamePending(userId, change) {
+    const count = (this.pendingNewGames.get(userId) || 0) + change;
+    if (count > 0) this.pendingNewGames.set(userId, count);
+    else this.pendingNewGames.delete(userId);
+  }
+
   async handleButtonInteraction(interaction) {
     const { customId, user } = interaction;
 
@@ -198,21 +206,34 @@ class Bot {
         return;
       }
 
-      const { session: created, sessionNumber } = await this.sessionManager.createSession(user.id, user.username, storyId);
+      // Creating the game and playing its opening is one of this reader's
+      // turns, so two clicks cannot both take the same session number and no
+      // message can be played in the new game before its opening. Messages
+      // that arrive while it is pending wait for it and go to the new game.
+      // The click is acknowledged first, because the queue may be busy for
+      // longer than Discord waits for a reply.
+      this.markNewGamePending(user.id, 1);
+      const acknowledged = interaction.deferUpdate();
+      acknowledged.catch(() => {});
 
-      await interaction.update({
-        content: `🎮 **${story.title}** — Session ${sessionNumber}\n\n*Generating your opening scene...*`,
-        embeds: [],
-        components: []
-      });
-
-      // Run the opening as one of this reader's turns, starting from the saved
-      // file in case one of their messages got in first.
       await this.sessionManager.withUserLock(user.id, async () => {
+        let session, sessionNumber;
+        try {
+          ({ session, sessionNumber } = await this.sessionManager.createSession(user.id, user.username, storyId));
+        } finally {
+          this.markNewGamePending(user.id, -1);
+        }
+
+        await acknowledged;
+        await interaction.editReply({
+          content: `🎮 **${story.title}** — Session ${sessionNumber}\n\n*Generating your opening scene...*`,
+          embeds: [],
+          components: []
+        });
+
         try {
           const openingAction = story.openingAction
             || 'This is the opening turn. Set the scene where the story begins, introduce the reader to their surroundings, and establish the situation that sets the story in motion.';
-          const session = (await this.sessionManager.getSessionByNumber(user.id, sessionNumber)) || created;
           const prompt = this.narrationService.buildPrompt(session, openingAction);
           const response = await this.narrationService.callLLM(prompt, session);
           const { narration, stateUpdate } = this.narrationService.parseResponse(response);
@@ -304,21 +325,27 @@ class Bot {
       return;
     }
 
-    try {
-      await message.react('👀');
-    } catch (reactError) {
-      console.error('Failed to add reaction:', reactError);
-    }
+    // Work out which session this message is for now, as it arrives, so a
+    // switch the reader makes while it waits in the queue cannot move it.
+    // If a new game is being set up, the message is for that game instead.
+    const target = this.pendingNewGames.has(userId)
+      ? null
+      : this.sessionManager.getActiveSessionNumber(userId);
+    if (target) target.catch(() => {});
 
     // One turn at a time per reader: each turn loads, calls the AI and saves
     // before the next starts, so a quick second message cannot overwrite the
-    // first one's save.
-    await this.sessionManager.withUserLock(userId, async () => {
+    // first one's save. Joining the queue straight away keeps messages in the
+    // order they arrived.
+    const turn = this.sessionManager.withUserLock(userId, async () => {
       try {
         await message.channel.sendTyping();
         console.log(`[DEBUG] Processing action from ${username}: ${userAction}`);
 
-        const session = await this.sessionManager.getActiveSession(userId);
+        const sessionNumber = target ? await target : await this.sessionManager.getActiveSessionNumber(userId);
+        const session = sessionNumber === null
+          ? null
+          : await this.sessionManager.getSessionByNumber(userId, sessionNumber);
 
         if (!session) {
           await message.reply('You don\'t have an active game. Use `/start` to begin a new story!');
@@ -351,7 +378,6 @@ class Bot {
           console.log('[DEBUG] End conditions met, setting status to concluding');
         }
 
-        const sessionNumber = parseInt(session.session.session_id.split('-').pop());
         await this.sessionManager.saveSession(userId, sessionNumber, session);
 
         const chunks = this.discordUI.splitMessage(narration);
@@ -364,6 +390,14 @@ class Bot {
         await message.reply('Sorry, something went wrong. Please try again.');
       }
     });
+
+    try {
+      await message.react('👀');
+    } catch (reactError) {
+      console.error('Failed to add reaction:', reactError);
+    }
+
+    await turn;
   }
 }
 

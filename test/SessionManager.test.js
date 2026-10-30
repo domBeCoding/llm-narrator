@@ -271,6 +271,31 @@ test('setActiveSession: the choice is kept on disk, so a new manager sees it', a
   assert.strictEqual(session.session.session_id, 'session-42-1');
 });
 
+test('setActiveSession: replaces the record in one step and leaves no temporary files', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1);
+  await writeSession(dir, '42', 2);
+
+  await Promise.all([manager.setActiveSession('42', 1), manager.setActiveSession('42', 2)]);
+
+  const record = JSON.parse(await fs.readFile(path.join(dir, 'active-42.json'), 'utf8'));
+  assert.ok([1, 2].includes(record.sessionNumber));
+  const leftovers = (await fs.readdir(dir)).filter(f => f.includes('.tmp-'));
+  assert.deepStrictEqual(leftovers, []);
+});
+
+test('setActiveSession: removes its temporary file if the rename fails', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  // A folder where the record should be makes the rename fail.
+  await fs.mkdir(path.join(dir, 'active-42.json'));
+  await fs.writeFile(path.join(dir, 'active-42.json', 'keep'), '', 'utf8');
+
+  await assert.rejects(manager.setActiveSession('42', 1));
+
+  const leftovers = (await fs.readdir(dir)).filter(f => f.includes('.tmp-'));
+  assert.deepStrictEqual(leftovers, []);
+});
+
 test('setActiveSession: the choice is per user', async (t) => {
   const { dir, manager } = await makeManager(t);
   await writeSession(dir, '42', 1);
@@ -317,6 +342,37 @@ test('getUserSessions: does not list the active session record as a session', as
   const sessions = await manager.getUserSessions('42');
 
   assert.deepStrictEqual(sessions.map(s => s.sessionNumber), [1]);
+});
+
+for (const [label, recorded] of [
+  ['a string', '"1"'],
+  ['zero', '0'],
+  ['a negative number', '-1'],
+  ['a fraction', '1.5'],
+  ['a path', '"../session-7-1"'],
+  ['null', 'null'],
+]) {
+  test(`getActiveSession: falls back to the newest when the recorded number is ${label}`, async (t) => {
+    const { dir, manager } = await makeManager(t);
+    await writeSession(dir, '42', 1);
+    await writeSession(dir, '42', 2);
+    await fs.writeFile(path.join(dir, 'active-42.json'), `{"sessionNumber": ${recorded}}`, 'utf8');
+
+    const session = await manager.getActiveSession('42');
+
+    assert.strictEqual(session.session.session_id, 'session-42-2');
+  });
+}
+
+test('getActiveSession: falls back to the newest when the active session record is not JSON', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1);
+  await writeSession(dir, '42', 2);
+  await fs.writeFile(path.join(dir, 'active-42.json'), '{"sessionNum', 'utf8');
+
+  const session = await manager.getActiveSession('42');
+
+  assert.strictEqual(session.session.session_id, 'session-42-2');
 });
 
 // --- One turn at a time per reader ------------------------------------------
@@ -366,6 +422,57 @@ test('withUserLock: forgets a user once their queue is empty', async (t) => {
   await new Promise(resolve => setImmediate(resolve));
 
   assert.strictEqual(manager.userQueues.size, 0);
+});
+
+test('withUserLock: a nested call for the same user runs instead of deadlocking', async (t) => {
+  const { manager } = await makeManager(t);
+  const events = [];
+
+  const outer = manager.withUserLock('42', async () => {
+    events.push('outer start');
+    const inner = await manager.withUserLock('42', async () => {
+      events.push('inner');
+      return 'inner done';
+    });
+    events.push('outer end');
+    return inner;
+  });
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('deadlocked')), 500));
+
+  assert.strictEqual(await Promise.race([outer, timeout]), 'inner done');
+  assert.deepStrictEqual(events, ['outer start', 'inner', 'outer end']);
+});
+
+test('withUserLock: a nested call for another user still queues behind that user', async (t) => {
+  const { manager } = await makeManager(t);
+  const events = [];
+  let release;
+  const otherBusy = manager.withUserLock('7', () => new Promise(resolve => {
+    release = () => { events.push('7 first'); resolve(); };
+  }));
+
+  const outer = manager.withUserLock('42', async () => {
+    await manager.withUserLock('7', async () => events.push('7 nested'));
+  });
+  setTimeout(() => release(), 20);
+  await Promise.all([otherBusy, outer]);
+
+  assert.deepStrictEqual(events, ['7 first', '7 nested']);
+});
+
+test('withUserLock: a later call queues normally once a nested call has finished', async (t) => {
+  const { manager } = await makeManager(t);
+  const events = [];
+
+  const first = manager.withUserLock('42', async () => {
+    await manager.withUserLock('42', async () => events.push('nested'));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    events.push('first end');
+  });
+  const second = manager.withUserLock('42', async () => events.push('second'));
+  await Promise.all([first, second]);
+
+  assert.deepStrictEqual(events, ['nested', 'first end', 'second']);
 });
 
 // --- Known defects -----------------------------------------------------------
