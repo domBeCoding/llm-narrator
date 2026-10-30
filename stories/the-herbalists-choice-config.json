@@ -148,7 +148,8 @@
         {
           "name": "final_encounter",
           "conditions": {"flag": "moonpetal_obtained", "value": true},
-          "state": {"health": "recovering", "consciousness": "awake", "disposition": "calm, grateful"}
+          "state": {"health": "recovering", "consciousness": "awake", "disposition": "calm, grateful"},
+          "note": "On the Halden path (Halden agreed to help), apply this phase only once the halden_elara_reunion beat and halden_reconciled true have been reported, in the same reply or earlier. If Halden was never met or turned the reader away, it applies once the moonpetal is obtained."
         }
       ]
     },

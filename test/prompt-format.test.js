@@ -95,3 +95,22 @@ test('system prompt: on the Halden path Elara must not recover before the reunio
   assert.match(line, /halden_elara_reunion/);
   assert.match(line, /halden_reconciled: true/);
 });
+
+// Phase conditions are not evaluated by the code; the whole config is sent to
+// the AI as its mechanical rules. So the note on Elara's final phase is how the
+// config stops pushing recovery on the Halden path before the reunion.
+test('story config: Elara\'s final phase waits for the reunion on the Halden path, and the AI sees it', () => {
+  const finalPhase = config.character_state_progression.elara.phases.find(p => p.name === 'final_encounter');
+  assert.strictEqual(finalPhase.state.health, 'recovering');
+  assert.match(finalPhase.note, /Halden path/);
+  assert.match(finalPhase.note, /halden_elara_reunion/);
+  assert.match(finalPhase.note, /halden_reconciled true/);
+
+  const service = new NarrationService({
+    getStory: () => ({ content: 'CONTENT', config }),
+    getSystemPrompt: () => prompt,
+  }, 'key');
+  const session = JSON.parse(JSON.stringify(template));
+  const { systemContext } = service.buildPrompt(session, 'I look around');
+  assert.ok(systemContext.includes(JSON.stringify(finalPhase.note)), 'the note is in the config sent to the AI');
+});
