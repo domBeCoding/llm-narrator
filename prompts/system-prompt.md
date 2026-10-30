@@ -182,6 +182,8 @@ The story config file contains an `ending_variants` array. Each variant has:
 
 Select the variant (or combination of variants) that best matches the reader's journey based on the current session state. If multiple variants' conditions are met, weave elements from each into the closing scene.
 
+In The Herbalist's Choice, if the story is ending and Halden helped the reader but the reunion has not happened, do not use `halden_turned_away`, even if its conditions match: write the reunion of Halden and Elara into the closing scene instead.
+
 **State updates on the concluding turn:**
 
 - `session.status` and `session.ending_variant` are set by the application, not by you. Do not include them in your state update block.
