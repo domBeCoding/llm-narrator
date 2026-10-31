@@ -248,7 +248,8 @@ The application layer (the Discord bot) owns state; the LLM only narrates and re
 │                                                         │
 │  3. Bot builds the prompt:                              │
 │     - System prompt (role, rules)                       │
-│     - Current session state                             │
+│     - Earlier turns, as chat messages                   │
+│     - Current session state, without the history        │
 │     - Story context (story.md)                          │
 │     - Story config (flags, end conditions, variants)    │
 │     - Reader's action for this turn                     │
@@ -270,6 +271,8 @@ The application layer (the Discord bot) owns state; the LLM only narrates and re
 │  10. Repeat                                             │
 └─────────────────────────────────────────────────────────┘
 ```
+
+Each earlier turn is sent once, as a chat message. The session state in the final user message leaves out `conversation_history` and `session.last_llm_output`, which repeats the last narration. Both are still saved in the session file, and the `get_last_narration` tool reads `last_llm_output` from there.
 
 ### Session Status Lifecycle
 
