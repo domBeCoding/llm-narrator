@@ -204,8 +204,8 @@ for (const [kind, action, reply] of [
     await playReply(t, svc, session, action, textReply(reply));
 
     assert.strictEqual(session.session.last_llm_output, narrationFor(2));
-    // The exchange is still a turn of the conversation.
-    assert.strictEqual(session.session.turn_count, 3);
+    // Not a story turn, but the exchange stays in the conversation.
+    assert.strictEqual(session.session.turn_count, 2);
     assert.deepStrictEqual(session.conversation_history.slice(-2), [
       { role: 'user', content: action },
       { role: 'assistant', content: reply },
@@ -237,4 +237,21 @@ test('resuming after a healthcheck gives back the earlier scene', async (t) => {
   const { narration, stateUpdate } = svc.parseResponse(response);
   svc.applyStateUpdates(session, stateUpdate, narration, 'continue');
   assert.strictEqual(session.session.last_llm_output, narrationFor(2));
+});
+
+test('a healthcheck does not count as a turn, and the next story turn counts as one', async (t) => {
+  const svc = new NarrationService(await loadStories(t), 'key');
+  const session = await freshSession();
+  await playTurn(t, svc, session, 1);
+  await playTurn(t, svc, session, 2);
+  const activeAt = session.session.last_action_at;
+
+  await new Promise(resolve => setTimeout(resolve, 2));
+  await playReply(t, svc, session, 'you there?', textReply(HEALTHCHECK_REPLY));
+  assert.strictEqual(session.session.turn_count, 2);
+  assert.notStrictEqual(session.session.last_action_at, activeAt, 'the reader was still active');
+
+  await playTurn(t, svc, session, 3);
+  assert.strictEqual(session.session.turn_count, 3);
+  assert.deepStrictEqual(session.choice_history.map(entry => entry.turn), [1, 2, 3]);
 });
