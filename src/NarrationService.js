@@ -60,7 +60,7 @@ class NarrationService {
     return { ...state, session: meta };
   }
 
-    evaluateEndConditions(session, config) {
+  evaluateEndConditions(session, config) {
     if (!config || !config.end_conditions || !config.end_conditions.all_required) {
       return false;
     }
