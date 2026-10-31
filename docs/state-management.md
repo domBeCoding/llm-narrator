@@ -224,7 +224,7 @@ session:
   turn_count: 3
   started_at: "2026-07-25T12:00:00Z"
   last_action_at: "2026-07-25T12:15:00Z"
-  last_llm_output: null # full verbatim narration from the last turn
+  last_llm_output: null # full verbatim narration from the last story turn; clarification and healthcheck replies (no state block) leave it alone
   ending_variant: null # null | halden_reconciled | tomas_helped | solo_path | corwin_involved | halden_turned_away
 
 conversation_history: [] # array of {role, content} pairs — reader actions and LLM narrations
