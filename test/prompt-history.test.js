@@ -44,6 +44,13 @@ function textReply(text) {
   return { stop_reason: 'end_turn', content: [{ type: 'text', text }] };
 }
 
+// A story turn's reply: the narration followed by a state block, as the
+// system prompt asks for every real story action.
+function storyReply(text, turn) {
+  const update = { choice_history: { action: `looked closer on turn ${turn}`, consequence: 'saw a little more' } };
+  return textReply(`${text}\n\n\`\`\`json\n${JSON.stringify(update)}\n\`\`\``);
+}
+
 function narrationFor(turn) {
   return `NARRATION OF TURN ${turn}: the lamplight shifts across the shelves.`;
 }
@@ -55,11 +62,17 @@ function actionFor(turn) {
 // Plays one turn the way Bot does, with the AI's reply supplied, and returns
 // the request body that was sent.
 async function playTurn(t, svc, session, turn) {
-  const bodies = stubFetch(t, [textReply(narrationFor(turn))]);
-  const prompt = svc.buildPrompt(session, actionFor(turn));
+  return playReply(t, svc, session, actionFor(turn), storyReply(narrationFor(turn), turn));
+}
+
+// Sends one reader message, with the AI's replies supplied in order, and
+// returns the first request body that was sent.
+async function playReply(t, svc, session, action, ...replies) {
+  const bodies = stubFetch(t, replies);
+  const prompt = svc.buildPrompt(session, action);
   const response = await svc.callLLM(prompt, session);
   const { narration, stateUpdate } = svc.parseResponse(response);
-  svc.applyStateUpdates(session, stateUpdate, narration, actionFor(turn));
+  svc.applyStateUpdates(session, stateUpdate, narration, action);
   return bodies[0];
 }
 
@@ -160,4 +173,68 @@ test('get_last_narration still returns the last narration after it leaves the st
   assert.strictEqual(toolResult.type, 'tool_result');
   assert.strictEqual(toolResult.content, narrationFor(2));
   assert.strictEqual(result, narrationFor(2));
+});
+
+// --- The last scene (get_last_narration) -------------------------------------
+
+const HEALTHCHECK_REPLY = 'The Narrator looks up from the page. \'I am still here. Shall we carry on with the story?\'';
+const CLARIFICATION_REPLY = 'The Narrator pauses, quill raised. \'Did you mean you want to leave the apothecary, or look out of the window?\'';
+
+test('a story turn sets last_llm_output to its narration', async (t) => {
+  const svc = new NarrationService(await loadStories(t), 'key');
+  const session = await freshSession();
+
+  await playTurn(t, svc, session, 1);
+  assert.strictEqual(session.session.last_llm_output, narrationFor(1));
+
+  await playTurn(t, svc, session, 2);
+  assert.strictEqual(session.session.last_llm_output, narrationFor(2));
+});
+
+for (const [kind, action, reply] of [
+  ['healthcheck', 'you there?', HEALTHCHECK_REPLY],
+  ['clarification', 'the thing by the door', CLARIFICATION_REPLY],
+]) {
+  test(`a ${kind} reply leaves last_llm_output as the last scene`, async (t) => {
+    const svc = new NarrationService(await loadStories(t), 'key');
+    const session = await freshSession();
+    await playTurn(t, svc, session, 1);
+    await playTurn(t, svc, session, 2);
+
+    await playReply(t, svc, session, action, textReply(reply));
+
+    assert.strictEqual(session.session.last_llm_output, narrationFor(2));
+    // The exchange is still a turn of the conversation.
+    assert.strictEqual(session.session.turn_count, 3);
+    assert.deepStrictEqual(session.conversation_history.slice(-2), [
+      { role: 'user', content: action },
+      { role: 'assistant', content: reply },
+    ]);
+    assert.strictEqual(session.choice_history.length, 2);
+  });
+}
+
+test('resuming after a healthcheck gives back the earlier scene', async (t) => {
+  const svc = new NarrationService(await loadStories(t), 'key');
+  const session = await freshSession();
+  await playTurn(t, svc, session, 1);
+  await playTurn(t, svc, session, 2);
+  await playReply(t, svc, session, 'hey', textReply(HEALTHCHECK_REPLY));
+
+  const bodies = stubFetch(t, [
+    { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tool_1', name: 'get_last_narration', input: {} }] },
+    textReply(narrationFor(2)),
+  ]);
+  const prompt = svc.buildPrompt(session, 'continue');
+  const response = await svc.callLLM(prompt, session);
+
+  const toolResult = bodies[1].messages.at(-1).content[0];
+  assert.strictEqual(toolResult.type, 'tool_result');
+  assert.strictEqual(toolResult.content, narrationFor(2));
+
+  // The repeated scene comes back without a state block, and the scene to
+  // resume stays the same.
+  const { narration, stateUpdate } = svc.parseResponse(response);
+  svc.applyStateUpdates(session, stateUpdate, narration, 'continue');
+  assert.strictEqual(session.session.last_llm_output, narrationFor(2));
 });
