@@ -336,16 +336,19 @@ test('applyStateUpdates: initialises conversation_history if missing from sessio
 
 // --- Known defects -----------------------------------------------------------
 
-test('applyStateUpdates: increments turn and saves narration even when stateUpdate is null', () => {
-  // Previously a null stateUpdate caused an early return that skipped
-  // turn_count and last_llm_output. Bookkeeping now runs unconditionally.
+test('applyStateUpdates: keeps the turn count and last scene when stateUpdate is null', () => {
+  // A reply with no state block (a clarification, healthcheck or resume) is
+  // not a story turn: it leaves turn_count and last_llm_output alone, but
+  // still records when the reader was last active.
   const svc = new NarrationService(makeStoryManagerStub(), 'key');
   const session = makeSession();
+  session.session.last_action_at = 'EARLIER';
 
   svc.applyStateUpdates(session, null, 'NEW NARRATION');
 
-  assert.strictEqual(session.session.turn_count, 4);
-  assert.strictEqual(session.session.last_llm_output, 'NEW NARRATION');
+  assert.strictEqual(session.session.turn_count, 3);
+  assert.strictEqual(session.session.last_llm_output, 'PREVIOUS NARRATION');
+  assert.notStrictEqual(session.session.last_action_at, 'EARLIER');
 });
 
 // Fixed by state validation (src/StateValidator.js); was a TODO test.
