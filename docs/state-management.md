@@ -221,10 +221,10 @@ session:
   story_id: "the-herbalists-choice"
   reader_name: "Wren"
   status: "active" # active | concluding | completed
-  turn_count: 3
+  turn_count: 3 # story turns only; clarification, healthcheck and resume replies (no state block) are not counted
   started_at: "2026-07-25T12:00:00Z"
   last_action_at: "2026-07-25T12:15:00Z"
-  last_llm_output: null # full verbatim narration from the last turn
+  last_llm_output: null # full verbatim narration from the last story turn; clarification, healthcheck and resume replies (no state block) leave it alone
   ending_variant: null # null | halden_reconciled | tomas_helped | solo_path | corwin_involved | halden_turned_away
 
 conversation_history: [] # array of {role, content} pairs — reader actions and LLM narrations
@@ -262,7 +262,10 @@ The application layer (the Discord bot) owns state; the LLM only narrates and re
 │     (src/StateValidator.js), drops and logs invalid ones │
 │                                                         │
 │  7. Bot applies the valid changes and records            │
-│     turn_count, last_action_at and last_llm_output       │
+│     last_action_at. On a story turn (a reply with a      │
+│     state block) it also adds one to turn_count and      │
+│     sets last_llm_output. Clarification, healthcheck     │
+│     and resume replies leave both alone.                 │
 │                                                         │
 │  8. Bot saves the session file                          │
 │                                                         │

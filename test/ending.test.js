@@ -221,15 +221,15 @@ test('buildPrompt: concluding directive tells the LLM not to set status or endin
 
 // --- applyStateUpdates bookkeeping fix --------------------------------------
 
-test('applyStateUpdates: increments turn_count and sets last_llm_output even when stateUpdate is null', () => {
+test('applyStateUpdates: keeps turn_count and last_llm_output when stateUpdate is null', () => {
   const svc = makeService();
   const session = makeSession();
   const before = session.session.turn_count;
 
   svc.applyStateUpdates(session, null, 'NEW NARRATION');
 
-  assert.strictEqual(session.session.turn_count, before + 1);
-  assert.strictEqual(session.session.last_llm_output, 'NEW NARRATION');
+  assert.strictEqual(session.session.turn_count, before);
+  assert.strictEqual(session.session.last_llm_output, 'PREVIOUS');
 });
 
 // --- Integration: the full concluding flow ----------------------------------

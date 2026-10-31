@@ -250,3 +250,16 @@ test('a new game started behind a slow turn acknowledges the click straight away
 
   assert.ok(acknowledgedAt !== null && acknowledgedAt - clickedAt < 50, 'the click was acknowledged before the queue freed up');
 });
+
+test('a message the bot cannot read gets a canned clarification and leaves the session alone', async (t) => {
+  const { bot, prompted, dir } = await makeBot(t);
+  const file = path.join(dir, `session-${USER_ID}-1.json`);
+  const before = await fs.readFile(file, 'utf8');
+  const message = fakeMessage('asdfghjkl');
+
+  await bot.handleMessage(message);
+
+  assert.strictEqual(prompted.length, 0);
+  assert.strictEqual(message.replies.length, 1);
+  assert.strictEqual(await fs.readFile(file, 'utf8'), before);
+});

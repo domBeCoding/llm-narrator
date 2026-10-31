@@ -113,9 +113,16 @@ class NarrationService {
   // Every change the AI proposes is validated against the story config before
   // it touches the session. Rejected changes are logged and never saved.
   applyStateUpdates(session, stateUpdate, narration, userAction) {
-    session.session.turn_count += 1;
     session.session.last_action_at = new Date().toISOString();
-    session.session.last_llm_output = narration;
+    // Only a story turn counts as a turn and replaces the scene
+    // get_last_narration gives back. The system prompt has the AI send a state
+    // block with every story turn and none with a clarification, healthcheck
+    // or resume reply, so a reply without one keeps the count and the earlier
+    // scene.
+    if (stateUpdate) {
+      session.session.turn_count += 1;
+      session.session.last_llm_output = narration;
+    }
 
     if (userAction) {
       session.conversation_history = session.conversation_history || [];
