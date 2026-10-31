@@ -70,7 +70,7 @@ test('buildPrompt: embeds system prompt, story content, config and action', () =
   assert.match(systemContext, /## Story Config \(Mechanical Rules\)/);
 });
 
-test('buildPrompt: serialises the full session state as JSON in userMessage', () => {
+test('buildPrompt: serialises the session state as JSON in userMessage', () => {
   const svc = new NarrationService(makeStoryManagerStub(), 'key');
   const session = makeSession();
   const { userMessage } = svc.buildPrompt(session, 'action');

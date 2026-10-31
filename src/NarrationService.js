@@ -33,7 +33,7 @@ class NarrationService {
 
   buildPrompt(session, userAction) {
     const story = this.storyManager.getStory(session.session.story_id);
-    const stateSummary = JSON.stringify(session, null, 2);
+    const stateSummary = JSON.stringify(this.stateForPrompt(session), null, 2);
 
     let concludingDirective = '';
     if (session.session.status === 'concluding') {
@@ -48,7 +48,19 @@ class NarrationService {
     return { systemContext, userMessage };
   }
 
-  evaluateEndConditions(session, config) {
+  // The session state as the AI sees it in the final user message. Earlier
+  // turns are already sent once as chat messages, so conversation_history is
+  // left out here, and so is last_llm_output, which repeats the last of them
+  // (get_last_narration reads it from the session itself). Works on a copy so
+  // the saved session keeps both.
+  stateForPrompt(session) {
+    const { conversation_history, ...state } = session;
+    if (!state.session) return state;
+    const { last_llm_output, ...meta } = state.session;
+    return { ...state, session: meta };
+  }
+
+    evaluateEndConditions(session, config) {
     if (!config || !config.end_conditions || !config.end_conditions.all_required) {
       return false;
     }
