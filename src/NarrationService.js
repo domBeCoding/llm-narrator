@@ -5,6 +5,10 @@ const NARRATOR_SYSTEM = 'You are the Narrator, a Dungeon Master for interactive 
 const REQUEST_TIMEOUT_MS = 60000;
 const JSON_BLOCK = /```json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```/;
 
+// Closes every user message. It is the same text every turn, so the prompt
+// stays cacheable; the AI, not the code, decides which case the message is.
+const TURN_INSTRUCTION = 'If the reader\'s action is a story action, reply in the format the system prompt sets out: the story, the divider, the summary prompt and the choices, then a JSON block with the state updates. If an ending directive appears above, follow its format for the story action instead. If the message is a healthcheck or needs clarification, follow the Error Handling rules in the system prompt: reply in character with no choices and no JSON block. If the reader asks to resume after a healthcheck, call `get_last_narration` and present the narration it returns exactly as it is, with no JSON block.';
+
 const PROVIDERS = {
   kimi: KimiClient,
 };
@@ -43,7 +47,7 @@ class NarrationService {
 
     const systemContext = `${NARRATOR_SYSTEM}\n\n${this.storyManager.getSystemPrompt()}\n\n---\n\n## Story Context\n\n${story.content}\n\n---\n\n## Story Config (Mechanical Rules)\n\n\`\`\`json\n${JSON.stringify(story.config, null, 2)}\n\`\`\``;
 
-    const userMessage = `## Current Session State\n\n\`\`\`json\n${stateSummary}\n\`\`\`\n\n---\n\n## Reader's Action\n\n${userAction}${concludingDirective}\n\n---\n\nGenerate the narration response following the format specified in the system prompt. Include the story, divider, summary prompt, and choices. After the narration, include a JSON block with state updates.`;
+    const userMessage = `## Current Session State\n\n\`\`\`json\n${stateSummary}\n\`\`\`\n\n---\n\n## Reader's Action\n\n${userAction}${concludingDirective}\n\n---\n\n${TURN_INSTRUCTION}`;
 
     return { systemContext, userMessage };
   }
