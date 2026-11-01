@@ -70,6 +70,30 @@ test('buildPrompt: embeds system prompt, story content, config and action', () =
   assert.match(systemContext, /## Story Config \(Mechanical Rules\)/);
 });
 
+test('buildPrompt: the closing instruction asks for the state block on story actions and defers to the healthcheck rules', () => {
+  const svc = new NarrationService(makeStoryManagerStub(), 'key');
+  const { userMessage } = svc.buildPrompt(makeSession(), 'you there?');
+  const closing = userMessage.slice(userMessage.lastIndexOf('\n---\n'));
+
+  assert.match(closing, /story action.*the summary prompt and the choices, then a JSON block with the state updates/);
+  assert.match(closing, /healthcheck or needs clarification.*Error Handling rules.*no choices and no JSON block/);
+  assert.match(closing, /resume.*call `get_last_narration`/);
+  assert.match(closing, /ending directive appears above, follow its format/);
+  assert.doesNotMatch(closing, /Include the story, divider, summary prompt, and choices/);
+});
+
+test('buildPrompt: the closing instruction is the same text every turn', () => {
+  const svc = new NarrationService(makeStoryManagerStub(), 'key');
+  const closingOf = (action, overrides) => {
+    const { userMessage } = svc.buildPrompt(makeSession(overrides), action);
+    return userMessage.slice(userMessage.lastIndexOf('\n---\n'));
+  };
+
+  const story = closingOf('I check on Elara');
+  assert.strictEqual(closingOf('you there?'), story);
+  assert.strictEqual(closingOf('continue', { session: { status: 'concluding' } }), story);
+});
+
 test('buildPrompt: serialises the session state as JSON in userMessage', () => {
   const svc = new NarrationService(makeStoryManagerStub(), 'key');
   const session = makeSession();
