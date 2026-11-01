@@ -34,11 +34,13 @@ function makeSession(n) {
  * to how long its fake AI call takes, so tests can make replies finish out of
  * order.
  */
-async function makeBot(t, { sessions = [1], delays = {} } = {}) {
+async function makeBot(t, { sessions = [1], delays = {}, status = 'active', noBlock = [], endConditionsMet = false } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'narrator-bot-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   for (const n of sessions) {
-    await fs.writeFile(path.join(dir, `session-${USER_ID}-${n}.json`), JSON.stringify(makeSession(n)), 'utf8');
+    const session = makeSession(n);
+    session.session.status = status;
+    await fs.writeFile(path.join(dir, `session-${USER_ID}-${n}.json`), JSON.stringify(session), 'utf8');
   }
 
   await fs.writeFile(path.join(dir, 'session-template.json'), JSON.stringify(makeSession(0)), 'utf8');
@@ -55,12 +57,14 @@ async function makeBot(t, { sessions = [1], delays = {} } = {}) {
       await new Promise(resolve => setTimeout(resolve, delays[action] || 0));
       return action;
     },
-    parseResponse: (response) => ({ narration: `You: ${response}`, stateUpdate: {} }),
+    // Actions listed in `noBlock` get a reply with no state block, like a
+    // healthcheck or clarification reply.
+    parseResponse: (response) => ({ narration: `You: ${response}`, stateUpdate: noBlock.includes(response) ? null : {} }),
     applyStateUpdates: (session, stateUpdate, narration, action) => {
       session.session.turn_count += 1;
       session.choice_history.push(action);
     },
-    evaluateEndConditions: () => false,
+    evaluateEndConditions: () => endConditionsMet,
   };
   const discordUI = { splitMessage: (text) => [text] };
 
@@ -262,4 +266,42 @@ test('a message the bot cannot read gets a canned clarification and leaves the s
   assert.strictEqual(prompted.length, 0);
   assert.strictEqual(message.replies.length, 1);
   assert.strictEqual(await fs.readFile(file, 'utf8'), before);
+});
+
+// --- The final turn ------------------------------------------------------------
+
+test('a healthcheck reply on the final turn keeps the story concluding', async (t) => {
+  const { bot, readSaved } = await makeBot(t, { status: 'concluding', noBlock: ['you there?'], endConditionsMet: true });
+  const message = fakeMessage('you there?');
+
+  await bot.handleMessage(message);
+
+  assert.deepStrictEqual(message.replies, ['You: you there?']);
+  assert.strictEqual((await readSaved(1)).session.status, 'concluding');
+});
+
+test('a story turn on the final turn completes the story', async (t) => {
+  const { bot, readSaved } = await makeBot(t, { status: 'concluding', endConditionsMet: true });
+
+  await bot.handleMessage(fakeMessage('I sit with Elara'));
+
+  assert.strictEqual((await readSaved(1)).session.status, 'completed');
+});
+
+test('the story waits through a healthcheck, then ends on the next real action', async (t) => {
+  const { bot, readSaved } = await makeBot(t, { status: 'concluding', noBlock: ['you there?'], endConditionsMet: true });
+
+  await bot.handleMessage(fakeMessage('you there?'));
+  assert.strictEqual((await readSaved(1)).session.status, 'concluding');
+
+  await bot.handleMessage(fakeMessage('I sit with Elara'));
+  assert.strictEqual((await readSaved(1)).session.status, 'completed');
+});
+
+test('an active story moves to concluding once the end conditions are met', async (t) => {
+  const { bot, readSaved } = await makeBot(t, { endConditionsMet: true });
+
+  await bot.handleMessage(fakeMessage('I give Elara the tea'));
+
+  assert.strictEqual((await readSaved(1)).session.status, 'concluding');
 });
