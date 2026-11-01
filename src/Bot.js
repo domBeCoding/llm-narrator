@@ -370,9 +370,14 @@ class Bot {
 
         this.narrationService.applyStateUpdates(session, stateUpdate, narration, userAction);
 
+        // Only a story turn (a reply with a state block) can be the ending. A
+        // healthcheck, clarification or resume reply on the final turn has no
+        // block, so the story stays concluding until the reader acts.
         if (session.session.status === 'concluding') {
-          session.session.status = 'completed';
-          console.log('[DEBUG] Story concluded, setting status to completed');
+          if (stateUpdate) {
+            session.session.status = 'completed';
+            console.log('[DEBUG] Story concluded, setting status to completed');
+          }
         } else if (this.narrationService.evaluateEndConditions(session, story.config)) {
           session.session.status = 'concluding';
           console.log('[DEBUG] End conditions met, setting status to concluding');

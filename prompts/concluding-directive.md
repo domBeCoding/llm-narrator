@@ -6,3 +6,5 @@ The end conditions have all been met. This is the **final turn** of the story. Y
 2. Do **not** include a summary prompt, numbered choices, or a custom action prompt.
 3. Infer the appropriate ending from the current game state — the flags, character relationships, and events that occurred. The `ending_variants` in the story config describe possible endings; select the one (or combination) that best matches the reader's journey and weave it into the closing scene.
 4. Include a JSON state block as usual, but do **not** set `session.status` or `session.ending_variant` — the application handles those.
+
+This applies to a story action only. If the reader's message is a healthcheck or needs clarification (see Error Handling in the system prompt), do not write the ending yet: reply as you normally would, in character and with no JSON state block, and keep the ending for their next real action. If they ask to resume, call `get_last_narration` as usual.

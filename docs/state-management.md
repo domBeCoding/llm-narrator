@@ -285,14 +285,14 @@ The session `status` field transitions through three states, managed entirely by
 |---|---|---|---|
 | `active` | Story in progress | Set at session creation | Normal turns with choices |
 | `concluding` | All end conditions met; next turn is the ending | Set by bot after `evaluateEndConditions` passes | One more action, then the closing scene |
-| `completed` | Story is over; further play is blocked | Set by bot after the concluding turn | "Use `/restart` to play again" |
+| `completed` | Story is over; further play is blocked | Set by bot after the concluding story turn (a reply with a state block) | "Use `/restart` to play again" |
 
 **How the transition works:**
 
 1. After every turn, the bot calls `evaluateEndConditions(session, config)` which checks all `end_conditions.all_required` predicates against the current state.
 2. If all pass and the session is `active`, the bot sets `status = 'concluding'`.
 3. On the next turn, the bot sees `status === 'concluding'` and injects a **FINAL TURN — ENDING DIRECTIVE** into the LLM prompt. The directive tells the LLM to infer the appropriate ending from the current game state flags and the `ending_variants` descriptions in the story config.
-4. After the concluding turn, the bot sets `status = 'completed'`. Further messages are rejected.
+4. After the concluding story turn, the bot sets `status = 'completed'`. Further messages are rejected. A healthcheck, clarification or resume reply on the final turn has no state block, so the story stays `concluding` and the reader's next real action gets the ending. The directive tells the AI to answer those messages as usual and keep the ending for a story action.
 
 The LLM never sets `status` — that is a deterministic application-level decision. The LLM infers which ending variant fits based on the flags and character state visible in the prompt.
 
