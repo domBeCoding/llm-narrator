@@ -1,4 +1,4 @@
-const test = require('node:test');
+const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
 const Bot = require('../src/Bot');
@@ -76,7 +76,24 @@ test('an empty SSM value is treated as missing', async (t) => {
   assert.strictEqual(key, null);
 });
 
+// bot.init() reads process.env. Hide any host TypeSafe settings for these two
+// tests and put them back afterwards. The saved values are never logged.
+function withoutHostTypesafeEnv(t) {
+  const savedKey = process.env.TYPESAFE_API_KEY;
+  const savedName = process.env.TYPESAFE_CREDENTIALS_SECRET;
+  delete process.env.TYPESAFE_API_KEY;
+  delete process.env.TYPESAFE_CREDENTIALS_SECRET;
+  t.after(() => {
+    if (savedKey === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = savedKey;
+    if (savedName === undefined) delete process.env.TYPESAFE_CREDENTIALS_SECRET;
+    else process.env.TYPESAFE_CREDENTIALS_SECRET = savedName;
+  });
+}
+
+describe('init loads the TypeSafe key without the host environment', { concurrency: 1 }, () => {
 test('init still starts when the TypeSafe key is not configured', async (t) => {
+  withoutHostTypesafeEnv(t);
   const lines = captureConsole(t);
   t.mock.method(process, 'exit', (code) => {
     throw new Error(`process.exit ${code}`);
@@ -114,6 +131,7 @@ test('init still starts when the TypeSafe key is not configured', async (t) => {
 });
 
 test('init stores a configured TypeSafe key and does not log it', async (t) => {
+  withoutHostTypesafeEnv(t);
   const lines = captureConsole(t);
   t.mock.method(process, 'exit', (code) => {
     throw new Error(`process.exit ${code}`);
@@ -140,4 +158,5 @@ test('init stores a configured TypeSafe key and does not log it', async (t) => {
   assert.strictEqual(bot.typesafeApiKey, 'loaded-typesafe-key');
   assert.ok(lines.every(line => !line.includes('loaded-typesafe-key')));
   assert.ok(lines.every(line => !line.includes('discord-token') && !line.includes('llm-key')));
+});
 });
