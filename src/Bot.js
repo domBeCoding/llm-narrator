@@ -1,10 +1,22 @@
 const { Client, GatewayIntentBits, Events, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { isGibberish } = require('./utils');
+const { JevClient } = require('./JevClient');
+const { loadTypesafeApiKey } = require('./typesafeKey');
+
+// Kept as they are. Junk, whether caught locally or by Jev, uses one of these.
+const CLARIFICATIONS = [
+  'The Narrator pauses, quill hovering over the page. \'Sorry, I didn\'t quite catch that. What did you want to do?\'',
+  'The story holds its breath. \'Give me that again — what\'s your move?\'',
+  'The Narrator tilts their head. \'I want to make sure I got that right. What are you doing?\'',
+  'The Narrator looks up from their notes. \'I didn\'t understand that. What action do you want to take?\''
+];
 
 class Bot {
-  constructor({ secretsManager, storyManager, sessionManager, narrationService, discordUI, llmCredentialsSecret }) {
+  constructor({ secretsManager, storyManager, sessionManager, narrationService, discordUI, llmCredentialsSecret, typesafeApiKey = null, jevTimeoutMs } = {}) {
     this.secretsManager = secretsManager;
     this.llmCredentialsSecret = llmCredentialsSecret;
+    this.typesafeApiKey = typesafeApiKey;
+    this.jevTimeoutMs = jevTimeoutMs;
     this.storyManager = storyManager;
     this.sessionManager = sessionManager;
     this.narrationService = narrationService;
@@ -64,6 +76,8 @@ class Bot {
       this.discordToken = await this.secretsManager.getSecret('narrator-bot');
       const llmApiKey = await this.secretsManager.getSecret(this.llmCredentialsSecret);
       this.narrationService.apiKey = llmApiKey;
+      // Optional. A missing TypeSafe key must not stop startup.
+      this.typesafeApiKey = await loadTypesafeApiKey(this.secretsManager);
 
       console.log('Loading story data...');
       await this.storyManager.loadStoryData();
@@ -313,14 +327,10 @@ class Bot {
 
     if (!userAction) return;
 
-    if (isGibberish(userAction)) {
-      const clarifications = [
-        'The Narrator pauses, quill hovering over the page. \'Sorry, I didn\'t quite catch that. What did you want to do?\'',
-        'The story holds its breath. \'Give me that again — what\'s your move?\'',
-        'The Narrator tilts their head. \'I want to make sure I got that right. What are you doing?\'',
-        'The Narrator looks up from their notes. \'I didn\'t understand that. What action do you want to take?\''
-      ];
-      const reply = clarifications[Math.floor(Math.random() * clarifications.length)];
+    // Obvious mash is rejected here. Anything else is asked of Jev before the
+    // message joins the session queue or reaches the narrator.
+    if (await this._messageIsJunk(userAction)) {
+      const reply = CLARIFICATIONS[Math.floor(Math.random() * CLARIFICATIONS.length)];
       await message.reply(reply);
       return;
     }
@@ -403,6 +413,15 @@ class Bot {
     }
 
     await turn;
+  }
+
+  async _messageIsJunk(userAction) {
+    if (isGibberish(userAction)) return true;
+
+    const options = { apiKey: this.typesafeApiKey };
+    if (this.jevTimeoutMs != null) options.timeoutMs = this.jevTimeoutMs;
+    const client = new JevClient(options);
+    return client.isJunk(userAction);
   }
 }
 

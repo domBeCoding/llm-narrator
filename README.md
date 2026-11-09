@@ -66,6 +66,8 @@ npm start
 
 The bot reads two secrets from AWS SSM Parameter Store: `narrator-bot` (Discord token) and `kimi-credentials` (LLM API key).
 
+Junk filtering also uses a TypeSafe API key for Jev. The bot reads `TYPESAFE_API_KEY` from the environment when it is set, and otherwise loads the SSM parameter named by `TYPESAFE_CREDENTIALS_SECRET`, or `typesafe-api-key` when that is unset. If the key is missing, the bot still starts and player messages are allowed through to the narrator. Add the key to SSM separately. Do not commit it.
+
 ## Testing
 
 ```bash
