@@ -1,35 +1,46 @@
-function isGibberish(text) {
-  const cleaned = text.toLowerCase().trim();
+// QWERTY rows, including the punctuation keys on the home and bottom rows.
+const KEYBOARD_ROWS = [
+  'qwertyuiop',
+  "asdfghjkl;'",
+  'zxcvbnm,./',
+];
 
-  // Too short to be meaningful
-  if (cleaned.length < 2) return true;
+// Walks shorter than four characters include real words such as "up" and
+// "sad", so those go to Jev instead of being rejected here.
+const MIN_KEYBOARD_WALK_LENGTH = 4;
 
-  // Single character repeated (e.g., "aaaa", "hhh")
-  if (/^(.)\1{2,}$/.test(cleaned)) return true;
+// True when the whole string is a straight walk along one row, forwards or
+// backwards (qwerty, ytrewq). Sharing a row is not enough: flask and pour
+// use one row, but they do not walk along it.
+function isSequentialKeyboardWalk(text) {
+  const value = text.toLowerCase();
+  if (value.length < MIN_KEYBOARD_WALK_LENGTH) return false;
 
-  // Random keyboard mashing patterns (no vowels, or very few)
-  const vowels = cleaned.match(/[aeiou]/g);
-  const consonants = cleaned.match(/[bcdfghjklmnpqrstvwxyz]/g);
-  if (consonants && consonants.length > 4 && (!vowels || vowels.length === 0)) return true;
-
-  // Common gibberish patterns
-  const gibberishPatterns = [
-    /^[asdfghjkl;']+$/i,  // home row mashing
-    /^[qwertyuiop]+$/i,   // top row mashing
-    /^[zxcvbnm,./]+$/i,   // bottom row mashing
-    /^\d+$/,              // just numbers
-    /^[^a-z]*$/i,         // no letters at all
-  ];
-
-  for (const pattern of gibberishPatterns) {
-    if (pattern.test(cleaned)) return true;
+  for (const row of KEYBOARD_ROWS) {
+    const reversed = [...row].reverse().join('');
+    if (row.includes(value) || reversed.includes(value)) return true;
   }
-
-  // Very short and not a recognizable word or command
-  const recognizableWords = ['yes', 'no', 'ok', 'hi', 'hey', 'go', 'run', 'wait', 'stop', 'look', 'take', 'get', 'use', 'open', 'close', 'talk', 'ask', 'tell', 'give', 'drop', 'leave', 'enter', 'exit', 'help', 'continue', 'resume'];
-  if (cleaned.length <= 3 && !recognizableWords.includes(cleaned)) return true;
 
   return false;
 }
 
-module.exports = { isGibberish };
+// Cheap local pre-check for obvious junk only. Everything else is decided by
+// Jev. This must not reject real words that happen to use one keyboard row.
+function isGibberish(text) {
+  const cleaned = text.toLowerCase().trim();
+
+  // One character repeated (aaaa, hhh, !!!!).
+  if (/^(.)\1{2,}$/.test(cleaned)) return true;
+
+  // Digits only.
+  if (/^\d+$/.test(cleaned)) return true;
+
+  // No letters at all.
+  if (/^[^a-z]*$/i.test(cleaned)) return true;
+
+  if (isSequentialKeyboardWalk(cleaned)) return true;
+
+  return false;
+}
+
+module.exports = { isGibberish, isSequentialKeyboardWalk };

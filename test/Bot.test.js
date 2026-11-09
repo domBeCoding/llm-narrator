@@ -34,7 +34,7 @@ function makeSession(n) {
  * to how long its fake AI call takes, so tests can make replies finish out of
  * order.
  */
-async function makeBot(t, { sessions = [1], delays = {}, status = 'active', noBlock = [], endConditionsMet = false } = {}) {
+async function makeBot(t, { sessions = [1], delays = {}, status = 'active', noBlock = [], endConditionsMet = false, typesafeApiKey = null, jevTimeoutMs } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'narrator-bot-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   for (const n of sessions) {
@@ -68,11 +68,46 @@ async function makeBot(t, { sessions = [1], delays = {}, status = 'active', noBl
   };
   const discordUI = { splitMessage: (text) => [text] };
 
-  const bot = new Bot({ storyManager, sessionManager, narrationService, discordUI });
+  const bot = new Bot({ storyManager, sessionManager, narrationService, discordUI, typesafeApiKey, jevTimeoutMs });
   bot.client.user = { id: BOT_ID };
 
+  const warnings = [];
+  t.mock.method(console, 'warn', (...args) => {
+    warnings.push(args.map(part => String(part)).join(' '));
+  });
+
   const readSaved = async (n) => JSON.parse(await fs.readFile(path.join(dir, `session-${USER_ID}-${n}.json`), 'utf8'));
-  return { bot, dir, prompted, readSaved };
+  return { bot, dir, prompted, readSaved, warnings };
+}
+
+const CLARIFICATIONS = [
+  'The Narrator pauses, quill hovering over the page. \'Sorry, I didn\'t quite catch that. What did you want to do?\'',
+  'The story holds its breath. \'Give me that again — what\'s your move?\'',
+  'The Narrator tilts their head. \'I want to make sure I got that right. What are you doing?\'',
+  'The Narrator looks up from their notes. \'I didn\'t understand that. What action do you want to take?\''
+];
+
+function mockFetch(t, handler) {
+  const calls = [];
+  t.mock.method(global, 'fetch', async (url, opts) => {
+    const body = opts && opts.body ? JSON.parse(opts.body) : null;
+    const call = { url, opts, body };
+    calls.push(call);
+    return handler(call);
+  });
+  return calls;
+}
+
+function jevResult(noul) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({
+      model: 'jev-1.14.0',
+      answers: { is_junk: { type: 'noul', noul } },
+    }),
+    text: async () => '',
+  };
 }
 
 function fakeMessage(action) {
@@ -304,4 +339,128 @@ test('an active story moves to concluding once the end conditions are met', asyn
   await bot.handleMessage(fakeMessage('I give Elara the tea'));
 
   assert.strictEqual((await readSaved(1)).session.status, 'concluding');
+});
+
+// --- Junk filter -------------------------------------------------------------
+
+test('obvious junk is rejected locally and Jev is not called', async (t) => {
+  const { bot, prompted, warnings } = await makeBot(t, { typesafeApiKey: 'test-key' });
+  const calls = mockFetch(t, () => {
+    throw new Error('Jev should not be called');
+  });
+
+  for (const action of ['aaaa', '12345', '!?!?!?', 'qwerty', 'asdfgh', 'zxcvbnm', 'ytrewq', 'mnbv']) {
+    const message = fakeMessage(action);
+    await bot.handleMessage(message);
+    assert.strictEqual(message.replies.length, 1, action);
+    assert.ok(CLARIFICATIONS.includes(message.replies[0]), action);
+  }
+
+  assert.strictEqual(calls.length, 0);
+  assert.strictEqual(prompted.length, 0);
+  assert.deepStrictEqual(warnings, []);
+});
+
+test('real words and healthcheck or resume phrases reach the narrator', async (t) => {
+  const { bot, prompted } = await makeBot(t, { typesafeApiKey: 'test-key' });
+  const calls = mockFetch(t, () => jevResult(0.1));
+  const actions = ['flask', 'quiet', 'pour', 'look', 'wait', 'yes', 'continue', 'you there?', 'I look around the room'];
+
+  for (const action of actions) {
+    const message = fakeMessage(action);
+    await bot.handleMessage(message);
+    assert.deepStrictEqual(message.replies, [`You: ${action}`], action);
+  }
+
+  assert.deepStrictEqual(prompted.map(entry => entry.action), actions);
+  assert.strictEqual(calls.length, actions.length);
+  assert.ok(calls.every(call => call.url === 'https://api.typesafe.ai/v1/systemone'));
+  assert.strictEqual(calls[0].body.model, 'jev-1.14.0');
+  assert.strictEqual(calls[0].body.state.message, 'flask');
+  assert.match(calls[0].body.state.note, /player message in an interactive story/i);
+  assert.strictEqual(calls[0].opts.headers.Authorization, 'Bearer test-key');
+});
+
+test('a message Jev calls junk gets the canned reply and does not reach the narrator', async (t) => {
+  const { bot, prompted, dir } = await makeBot(t, { typesafeApiKey: 'test-key' });
+  const file = path.join(dir, `session-${USER_ID}-1.json`);
+  const before = await fs.readFile(file, 'utf8');
+  const calls = mockFetch(t, () => jevResult(0.95));
+  const message = fakeMessage('plokij');
+
+  await bot.handleMessage(message);
+
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].body.state.message, 'plokij');
+  assert.strictEqual(message.replies.length, 1);
+  assert.ok(CLARIFICATIONS.includes(message.replies[0]));
+  assert.strictEqual(prompted.length, 0);
+  assert.strictEqual(await fs.readFile(file, 'utf8'), before);
+});
+
+test('a Noul of 0.5 fails open and the message reaches the narrator', async (t) => {
+  const { bot, prompted } = await makeBot(t, { typesafeApiKey: 'test-key' });
+  mockFetch(t, () => jevResult(0.5));
+  const message = fakeMessage('flask');
+
+  await bot.handleMessage(message);
+
+  assert.deepStrictEqual(message.replies, ['You: flask']);
+  assert.deepStrictEqual(prompted.map(entry => entry.action), ['flask']);
+});
+
+test('a Noul of 0.7 is not junk', async (t) => {
+  const { bot, prompted } = await makeBot(t, { typesafeApiKey: 'test-key' });
+  mockFetch(t, () => jevResult(0.7));
+  const message = fakeMessage('flask');
+
+  await bot.handleMessage(message);
+
+  assert.deepStrictEqual(message.replies, ['You: flask']);
+  assert.strictEqual(prompted.length, 1);
+});
+
+test('a Jev timeout lets the message through', async (t) => {
+  const { bot, prompted, warnings } = await makeBot(t, { typesafeApiKey: 'test-key' });
+  mockFetch(t, () => {
+    const error = new Error('The operation was aborted due to timeout');
+    error.name = 'TimeoutError';
+    throw error;
+  });
+  const message = fakeMessage('flask');
+
+  await bot.handleMessage(message);
+
+  assert.deepStrictEqual(message.replies, ['You: flask']);
+  assert.strictEqual(prompted.length, 1);
+  assert.ok(warnings.some(line => /TimeoutError/.test(line)));
+  assert.ok(warnings.every(line => !line.includes('test-key')));
+});
+
+test('a Jev HTTP 500 lets the message through', async (t) => {
+  const { bot, prompted, warnings } = await makeBot(t, { typesafeApiKey: 'test-key' });
+  mockFetch(t, () => ({ ok: false, status: 500, text: async () => 'nope', json: async () => ({}) }));
+  const message = fakeMessage('flask');
+
+  await bot.handleMessage(message);
+
+  assert.deepStrictEqual(message.replies, ['You: flask']);
+  assert.strictEqual(prompted.length, 1);
+  assert.ok(warnings.some(line => /HTTP 500/.test(line)));
+  assert.ok(warnings.every(line => !line.includes('test-key')));
+});
+
+test('a missing TypeSafe key lets the message through without calling Jev', async (t) => {
+  const { bot, prompted, warnings } = await makeBot(t, { typesafeApiKey: null });
+  const calls = mockFetch(t, () => {
+    throw new Error('Jev should not be called');
+  });
+  const message = fakeMessage('flask');
+
+  await bot.handleMessage(message);
+
+  assert.deepStrictEqual(message.replies, ['You: flask']);
+  assert.strictEqual(prompted.length, 1);
+  assert.strictEqual(calls.length, 0);
+  assert.ok(warnings.some(line => /missing/i.test(line)));
 });

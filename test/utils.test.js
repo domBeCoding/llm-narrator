@@ -3,10 +3,13 @@ const assert = require('node:assert');
 
 const { isGibberish } = require('../src/utils');
 
-test('isGibberish: rejects empty and single-character input', () => {
+test('isGibberish: rejects empty input', () => {
   assert.strictEqual(isGibberish(''), true);
-  assert.strictEqual(isGibberish('a'), true);
   assert.strictEqual(isGibberish('   '), true);
+});
+
+test('isGibberish: does not treat a single letter as local junk', () => {
+  assert.strictEqual(isGibberish('a'), false);
 });
 
 test('isGibberish: rejects repeated single characters', () => {
@@ -15,10 +18,19 @@ test('isGibberish: rejects repeated single characters', () => {
   assert.strictEqual(isGibberish('!!!!'), true);
 });
 
-test('isGibberish: rejects keyboard row mashing', () => {
+test('isGibberish: does not treat a two-character repeat as local junk', () => {
+  assert.strictEqual(isGibberish('aa'), false);
+});
+
+test('isGibberish: rejects a sequential keyboard-row walk', () => {
   assert.strictEqual(isGibberish('asdfgh'), true);
   assert.strictEqual(isGibberish('qwertyuiop'), true);
   assert.strictEqual(isGibberish('zxcvbnm'), true);
+  assert.strictEqual(isGibberish('qwerty'), true);
+  assert.strictEqual(isGibberish('ytrewq'), true);
+  assert.strictEqual(isGibberish('hgfdsa'), true);
+  assert.strictEqual(isGibberish('mnbv'), true);
+  assert.strictEqual(isGibberish('asdf'), true);
 });
 
 test('isGibberish: rejects digit-only and letterless input', () => {
@@ -27,13 +39,14 @@ test('isGibberish: rejects digit-only and letterless input', () => {
   assert.strictEqual(isGibberish('!?!?!?'), true);
 });
 
-test('isGibberish: rejects consonant clusters with no vowels', () => {
-  assert.strictEqual(isGibberish('bcdfghjk'), true);
+test('isGibberish: does not treat consonant clusters as local junk', () => {
+  assert.strictEqual(isGibberish('bcdfghjk'), false);
 });
 
-test('isGibberish: rejects short unrecognised tokens', () => {
-  assert.strictEqual(isGibberish('xqz'), true);
-  assert.strictEqual(isGibberish('bl'), true);
+test('isGibberish: does not treat short unknown tokens as local junk', () => {
+  assert.strictEqual(isGibberish('xqz'), false);
+  assert.strictEqual(isGibberish('bl'), false);
+  assert.strictEqual(isGibberish('asd'), false);
 });
 
 test('isGibberish: accepts short recognised commands', () => {
@@ -60,17 +73,20 @@ test('isGibberish: is case-insensitive', () => {
   assert.strictEqual(isGibberish('I Look Around'), false);
 });
 
-// --- Known defects -----------------------------------------------------------
-
-test('BUG: single words made only of top-row letters are wrongly rejected', { todo: true }, () => {
-  // "quiet", "poetry", "tree" are all spelled with letters from qwertyuiop,
-  // so /^[qwertyuiop]+$/i flags them as keyboard mashing.
-  assert.strictEqual(isGibberish('quiet'), false);
-  assert.strictEqual(isGibberish('poetry'), false);
-  assert.strictEqual(isGibberish('tree'), false);
+test('isGibberish: accepts words made only of top-row letters', () => {
+  for (const word of ['quiet', 'poetry', 'tree', 'pour', 'type']) {
+    assert.strictEqual(isGibberish(word), false, `"${word}" should be accepted`);
+  }
 });
 
-test('BUG: single words made only of home-row letters are wrongly rejected', { todo: true }, () => {
-  assert.strictEqual(isGibberish('flask'), false);
-  assert.strictEqual(isGibberish('salads'), false);
+test('isGibberish: accepts words made only of home-row letters', () => {
+  for (const word of ['flask', 'salads', 'glass', 'sad']) {
+    assert.strictEqual(isGibberish(word), false, `"${word}" should be accepted`);
+  }
+});
+
+test('isGibberish: does not treat short real words on a keyboard row as walks', () => {
+  for (const word of ['up', 'we', 'as']) {
+    assert.strictEqual(isGibberish(word), false, `"${word}" should be accepted`);
+  }
 });
