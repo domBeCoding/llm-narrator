@@ -7,12 +7,14 @@ const storyManagerStub = {
   getSystemPrompt: () => 'SYSTEM',
   getConcludingDirective: () => `## ⚠️ FINAL TURN — ENDING DIRECTIVE
 
-The end conditions have all been met. This is the **final turn** of the story. You must:
+The end conditions have all been met. This is the **final turn** of the story. The application has already recorded the ending. You must:
 
 1. Write the closing scene using the ending format described in the system prompt (closing scene, \`========\` divider, "The story ends here.", "The End").
 2. Do **not** include a summary prompt, numbered choices, or a custom action prompt.
-3. Infer the appropriate ending from the current game state — the flags, character relationships, and events that occurred. The \`ending_variants\` in the story config describe possible endings; select the one (or combination) that best matches the reader's journey and weave it into the closing scene.
-4. Include a JSON state block as usual, but do **not** set \`session.status\` or \`session.ending_variant\` — the application handles those.`,
+3. Follow the recorded ending below. Weave every named variant into the closing scene. If no variant matched, write the closing scene from the current state. Do not choose or infer an ending yourself.
+4. Include a JSON state block as usual, but do **not** set \`session.status\` or \`session.ending_variant\` — the application handles those.
+
+{chosen_endings}`,
   getStory: () => ({
     id: 'the-herbalists-choice',
     title: 'The Herbalist\'s Choice',
@@ -199,14 +201,32 @@ test('buildPrompt: includes ending directive when status is concluding', () => {
   assert.match(combined, /The End/);
 });
 
-test('buildPrompt: concluding directive tells the LLM to infer ending from game state', () => {
+test('buildPrompt: concluding directive names the recorded variants and does not ask the model to choose', () => {
   const svc = makeService();
-  const session = makeSession({ session: { status: 'concluding' } });
-  const { systemContext, userMessage } = svc.buildPrompt(session, 'action');
-  const combined = systemContext + userMessage;
+  const session = makeSession({
+    session: { status: 'concluding', ending_variant: ['halden_reconciled', 'tomas_helped'] },
+  });
+  const { userMessage } = svc.buildPrompt(session, 'action');
+  const directive = userMessage.slice(userMessage.indexOf('FINAL TURN'));
 
-  assert.match(combined, /Infer the appropriate ending/);
-  assert.match(combined, /ending_variants/);
+  assert.ok(directive.indexOf('`halden_reconciled`') < directive.indexOf('`tomas_helped`'));
+  assert.match(directive, /Halden visits regularly now/);
+  assert.match(directive, /Tomas and the reader share a quiet moment/);
+  assert.match(directive, /Do not choose or infer an ending yourself/);
+  assert.doesNotMatch(directive, /Infer the appropriate ending/);
+  assert.doesNotMatch(directive, /select the one/);
+});
+
+test('buildPrompt: a concluding session with no recorded ending does not ask the model to pick one', () => {
+  const svc = makeService();
+  const session = makeSession({ session: { status: 'concluding', ending_variant: null } });
+  const { userMessage } = svc.buildPrompt(session, 'action');
+  const directive = userMessage.slice(userMessage.indexOf('FINAL TURN'));
+
+  assert.match(directive, /No ending variant matched the current flags/);
+  assert.match(directive, /Do not choose an ending yourself/);
+  assert.doesNotMatch(directive, /`halden_reconciled`/);
+  assert.doesNotMatch(directive, /Infer the appropriate ending/);
 });
 
 test('buildPrompt: concluding directive tells the LLM not to set status or ending_variant', () => {
@@ -239,32 +259,122 @@ test('Full flow: active → concluding → completed across two turns', () => {
   const { config } = storyManagerStub.getStory();
   const session = makeSession();
 
-  // Turn 1: the reader obtains the moonpetal and reconciles Halden
+  // Turn 1: the reader obtains the moonpetal and reconciles Halden.
+  // halden_encountered is set too, so the solo variant does not also match.
   svc.applyStateUpdates(session, {
-    story: { flags: { moonpetal_obtained: true, halden_reconciled: true } },
+    story: { flags: { moonpetal_obtained: true, halden_reconciled: true, halden_encountered: true } },
     characters: { elara: { health: 'recovering' } },
   }, 'You give Elara the moonpetal tea. Halden stands beside you, tears in his eyes.', 'I give Elara the tea');
 
-  // After applying state, check end conditions
+  // After applying state, check end conditions and record the ending.
   assert.strictEqual(svc.evaluateEndConditions(session, config), true);
-
-  // Transition to concluding (bot does this, no variant matching)
+  svc.recordEnding(session, config);
   session.session.status = 'concluding';
 
   assert.strictEqual(session.session.status, 'concluding');
+  assert.deepStrictEqual(session.session.ending_variant, ['halden_reconciled']);
 
-  // Turn 2: the concluding turn — LLM writes the ending
-  const { systemContext, userMessage } = svc.buildPrompt(session, 'I sit with Elara as she recovers');
-  const combined = systemContext + userMessage;
-  assert.match(combined, /FINAL TURN/);
-  assert.match(combined, /Infer the appropriate ending/);
+  // Turn 2: the concluding turn. The directive names the recorded ending.
+  const { userMessage } = svc.buildPrompt(session, 'I sit with Elara as she recovers');
+  const directive = userMessage.slice(userMessage.indexOf('FINAL TURN'));
+  assert.match(directive, /`halden_reconciled`/);
+  assert.match(directive, /Halden visits regularly now/);
+  assert.doesNotMatch(directive, /Infer the appropriate ending/);
 
-  // After the concluding turn, the bot transitions to completed
-  svc.applyStateUpdates(session, { story: { current_scene: 'Epilogue' } }, 'The apothecary has three people in it. The End', 'I sit with Elara');
+  // The model cannot change status or the ending. The bot then completes the story.
+  svc.applyStateUpdates(session, {
+    session: { status: 'active', ending_variant: ['solo_path'] },
+    story: { current_scene: 'Epilogue' },
+  }, 'The apothecary has three people in it. The End', 'I sit with Elara');
+  assert.strictEqual(session.session.status, 'concluding');
+  assert.deepStrictEqual(session.session.ending_variant, ['halden_reconciled']);
   session.session.status = 'completed';
 
   assert.strictEqual(session.session.status, 'completed');
+  assert.deepStrictEqual(session.session.ending_variant, ['halden_reconciled']);
   assert.strictEqual(session.session.turn_count, 7); // 5 + 1 + 1
+});
+
+test('recordEnding: saves one match', () => {
+  const svc = makeService();
+  const { config } = storyManagerStub.getStory();
+  const session = makeSession();
+  session.story.flags.moonpetal_obtained = true;
+  session.characters.elara.health = 'recovering';
+
+  svc.recordEnding(session, config);
+
+  assert.deepStrictEqual(session.session.ending_variant, ['solo_path']);
+});
+
+test('recordEnding: saves a mixed route in config order and drops nothing', () => {
+  const svc = makeService();
+  const { config } = storyManagerStub.getStory();
+  const session = makeSession();
+  session.story.flags.halden_reconciled = true;
+  session.story.flags.halden_encountered = true;
+  session.story.flags.tomas_involved = true;
+
+  const matched = svc.recordEnding(session, config);
+
+  assert.deepStrictEqual(matched, ['halden_reconciled', 'tomas_helped']);
+  assert.deepStrictEqual(session.session.ending_variant, ['halden_reconciled', 'tomas_helped']);
+});
+
+test('recordEnding: follows config order when the mixed route is listed the other way', () => {
+  const svc = makeService();
+  const { config } = storyManagerStub.getStory();
+  const reversed = {
+    ...config,
+    ending_variants: config.ending_variants.filter(variant => variant.id === 'tomas_helped' || variant.id === 'halden_reconciled').reverse(),
+  };
+  const session = makeSession();
+  session.story.flags.halden_reconciled = true;
+  session.story.flags.halden_encountered = true;
+  session.story.flags.tomas_involved = true;
+
+  svc.recordEnding(session, reversed);
+
+  assert.deepStrictEqual(session.session.ending_variant, ['tomas_helped', 'halden_reconciled']);
+});
+
+test('recordEnding: leaves null and warns when nothing matches', () => {
+  const svc = makeService();
+  const session = makeSession();
+  session.session.session_id = 'session-42-1';
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (message) => warnings.push(String(message));
+  try {
+    svc.recordEnding(session, {
+      ending_variants: [{ id: 'unreachable', conditions: [{ flag: 'moonpetal_obtained', value: true }] }],
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.strictEqual(session.session.ending_variant, null);
+  assert.deepStrictEqual(warnings, ['[ending] session=session-42-1 no ending variant matched the current flags']);
+});
+
+test('prompts: the model is not asked to infer or select the ending', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const directive = fs.readFileSync(path.join(__dirname, '..', 'prompts', 'concluding-directive.md'), 'utf8');
+  const system = fs.readFileSync(path.join(__dirname, '..', 'prompts', 'system-prompt.md'), 'utf8');
+
+  assert.match(directive, /\{chosen_endings\}/);
+  assert.match(directive, /Do not choose or infer an ending yourself/);
+  assert.match(directive, /healthcheck or needs clarification/);
+  assert.match(directive, /get_last_narration/);
+  assert.doesNotMatch(directive, /Infer the appropriate ending/);
+  assert.doesNotMatch(directive, /select the one/);
+  assert.doesNotMatch(system, /you do that on the concluding turn/);
+  assert.doesNotMatch(system, /It does not say which ending variant applies/);
+  assert.doesNotMatch(system, /Select the variant/);
+  assert.doesNotMatch(system, /to select the appropriate ending variant/);
+  assert.match(system, /do not use `halden_turned_away`/);
+  assert.match(system, /write the reunion of Halden and Elara into the closing scene instead/);
 });
 
 test('stub config: end conditions and ending rules match the shipped story config', () => {

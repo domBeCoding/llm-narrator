@@ -114,7 +114,10 @@ function play(svc, config, replies) {
     replies.forEach((update, i) => {
       const { narration, stateUpdate } = svc.parseResponse(reply(update));
       svc.applyStateUpdates(session, stateUpdate, narration, i === 0 ? 'opening' : `action ${i}`);
-      if (endedAtTurn === null && svc.evaluateEndConditions(session, config)) endedAtTurn = session.session.turn_count;
+      if (endedAtTurn === null && svc.evaluateEndConditions(session, config)) {
+        endedAtTurn = session.session.turn_count;
+        svc.recordEnding(session, config);
+      }
     });
   } finally {
     console.warn = originalWarn;
@@ -136,6 +139,7 @@ for (const [ending, act2] of Object.entries(ACT_2_ROUTES)) {
     assert.strictEqual(session.story.current_act, 3);
     assert.strictEqual(session.characters.elara.health, 'recovering');
     assert.deepStrictEqual(matchingVariants(session, config), [ending]);
+    assert.deepStrictEqual(session.session.ending_variant, [ending]);
     assert.strictEqual(session.choice_history.length, 2);
   });
 }
@@ -154,6 +158,7 @@ test('playthrough: the solo route ends without ever meeting Halden', async () =>
   assert.strictEqual(session.characters.elara.health, 'recovering');
   assert.strictEqual(endedAtTurn, replies.length);
   assert.deepStrictEqual(matchingVariants(session, config), ['solo_path']);
+  assert.deepStrictEqual(session.session.ending_variant, ['solo_path']);
 });
 
 test('story config: no ending requires halden_reconciled together with halden_encountered false', () => {
@@ -181,6 +186,7 @@ test('playthrough: meeting Corwin during act 1 still reaches the corwin_involved
   assert.ok(session.story.plot_beats_hit.includes('corwin_refusal'));
   assert.strictEqual(endedAtTurn, replies.length);
   assert.deepStrictEqual(matchingVariants(session, config), ['corwin_involved']);
+  assert.deepStrictEqual(session.session.ending_variant, ['corwin_involved']);
 });
 
 test('playthrough: no scripted route matches more than one ending', async () => {
@@ -198,6 +204,7 @@ test('playthrough: no scripted route matches more than one ending', async () => 
     const { session } = play(svc, config, replies);
     const matched = matchingVariants(session, config);
     assert.strictEqual(matched.length, 1, `${route} matched ${JSON.stringify(matched)}`);
+    assert.deepStrictEqual(session.session.ending_variant, matched);
   }
 });
 
@@ -212,8 +219,9 @@ test('playthrough: a mixed Halden and Tomas route matches both of their endings,
 
   assert.deepStrictEqual(warnings, []);
   assert.strictEqual(endedAtTurn, replies.length);
-  // The concluding directive lets the AI weave a combination of endings.
+  // Both endings are kept. There is no precedence list that would drop one.
   assert.deepStrictEqual(matchingVariants(session, config), ['halden_reconciled', 'tomas_helped']);
+  assert.deepStrictEqual(session.session.ending_variant, ['halden_reconciled', 'tomas_helped']);
 });
 
 // End conditions only check flags and character fields, and no flag tells
@@ -246,6 +254,7 @@ test('playthrough: on the Halden path, recovery before the reunion ends early an
   assert.strictEqual(session.story.flags.halden_reconciled, false);
   assert.ok(!session.story.plot_beats_hit.includes('halden_elara_reunion'));
   assert.deepStrictEqual(matchingVariants(session, config), ['halden_turned_away'], 'conditions alone match turned away');
+  assert.deepStrictEqual(session.session.ending_variant, ['halden_turned_away'], 'the known case is recorded as turned away');
 
   // What the AI is told on the final turn: Halden helped, so not turned away.
   session.session.status = 'concluding';

@@ -3,6 +3,16 @@ const { isGibberish } = require('./utils');
 const { JevClient } = require('./JevClient');
 const { loadTypesafeApiKey } = require('./typesafeKey');
 
+// A short label for /status. "halden_reconciled" becomes "Halden reconciled".
+function readableEnding(endingVariant) {
+  if (!Array.isArray(endingVariant) || endingVariant.length === 0) return null;
+  return endingVariant.map(id => {
+    const text = String(id).replace(/_/g, ' ').trim();
+    if (!text) return String(id);
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  }).join(', ');
+}
+
 // Kept as they are. Junk, whether caught locally or by Jev, uses one of these.
 const CLARIFICATIONS = [
   'The Narrator pauses, quill hovering over the page. \'Sorry, I didn\'t quite catch that. What did you want to do?\'',
@@ -182,15 +192,18 @@ class Bot {
       }
 
       const story = this.storyManager.getStory(session.session.story_id);
+      const fields = [
+        { name: 'Status', value: session.session.status, inline: true },
+        { name: 'Turn', value: String(session.session.turn_count), inline: true },
+        { name: 'Started', value: new Date(session.session.started_at).toLocaleDateString(), inline: true },
+        { name: 'Current Scene', value: session.story.current_scene || 'Unknown', inline: false },
+      ];
+      const ending = readableEnding(session.session.ending_variant);
+      if (ending) fields.push({ name: 'Ending', value: ending, inline: false });
       const embed = new EmbedBuilder()
         .setTitle(`📖 ${story?.title || 'Current Game'}`)
         .setColor(0x5865F2)
-        .addFields(
-          { name: 'Status', value: session.session.status, inline: true },
-          { name: 'Turn', value: String(session.session.turn_count), inline: true },
-          { name: 'Started', value: new Date(session.session.started_at).toLocaleDateString(), inline: true },
-          { name: 'Current Scene', value: session.story.current_scene || 'Unknown', inline: false }
-        );
+        .addFields(fields);
 
       await interaction.reply({
         embeds: [embed],
@@ -255,7 +268,7 @@ class Bot {
           this.narrationService.applyStateUpdates(session, stateUpdate, narration, openingAction);
 
           if (this.narrationService.evaluateEndConditions(session, story.config)) {
-            session.session.status = 'concluding';
+            this.beginConclusion(session, story.config);
           }
 
           await this.sessionManager.saveSession(user.id, sessionNumber, session);
@@ -389,7 +402,7 @@ class Bot {
             console.log('[DEBUG] Story concluded, setting status to completed');
           }
         } else if (this.narrationService.evaluateEndConditions(session, story.config)) {
-          session.session.status = 'concluding';
+          this.beginConclusion(session, story.config);
           console.log('[DEBUG] End conditions met, setting status to concluding');
         }
 
@@ -413,6 +426,13 @@ class Bot {
     }
 
     await turn;
+  }
+
+  // First move from active to concluding. The ending is chosen here, from
+  // the flags just saved, and kept when the concluding story turn completes.
+  beginConclusion(session, config) {
+    session.session.status = 'concluding';
+    this.narrationService.recordEnding(session, config);
   }
 
   async _messageIsJunk(userAction) {

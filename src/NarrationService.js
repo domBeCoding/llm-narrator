@@ -44,7 +44,11 @@ class NarrationService {
     let concludingDirective = '';
     if (session.session.status === 'concluding') {
       const template = this.storyManager.getConcludingDirective() || '';
-      concludingDirective = '\n\n---\n\n' + template;
+      const chosen = this.chosenEndingText(session);
+      const filled = template.includes('{chosen_endings}')
+        ? template.split('{chosen_endings}').join(chosen)
+        : `${template}\n\n${chosen}`;
+      concludingDirective = '\n\n---\n\n' + filled;
     }
 
     const systemContext = `${NARRATOR_SYSTEM}\n\n${this.storyManager.getSystemPrompt()}\n\n---\n\n## Story Context\n\n${story.content}\n\n---\n\n## Story Config (Mechanical Rules)\n\n\`\`\`json\n${JSON.stringify(story.config, null, 2)}\n\`\`\``;
@@ -80,6 +84,58 @@ class NarrationService {
       }
       return false;
     });
+  }
+
+  // Every variant whose conditions all match, in config order. The same rule
+  // as the playthrough tests: a variant matches only when every condition's
+  // flag has the required value. There is no precedence list.
+  matchEndingVariants(session, config) {
+    const variants = config && Array.isArray(config.ending_variants) ? config.ending_variants : [];
+    const flags = session && session.story && session.story.flags ? session.story.flags : {};
+    return variants
+      .filter(variant => variant && Array.isArray(variant.conditions)
+        && variant.conditions.every(cond => flags[cond.flag] === cond.value))
+      .map(variant => variant.id);
+  }
+
+  // Called once, when the story first moves from active to concluding.
+  // Saves every match, or leaves null and warns when nothing matches.
+  // The concluding turn keeps whatever this wrote.
+  recordEnding(session, config) {
+    const matched = this.matchEndingVariants(session, config);
+    if (matched.length === 0) {
+      session.session.ending_variant = null;
+      const sessionId = session.session && session.session.session_id;
+      console.warn(`[ending] session=${sessionId} no ending variant matched the current flags`);
+      return null;
+    }
+    session.session.ending_variant = matched;
+    return matched;
+  }
+
+  recordedEndingIds(session) {
+    const value = session.session && session.session.ending_variant;
+    return Array.isArray(value) ? value : [];
+  }
+
+  // Names the endings already stored on the session, with their config
+  // descriptions, so the model weaves that ending instead of choosing one.
+  chosenEndingText(session) {
+    const ids = this.recordedEndingIds(session);
+    if (ids.length === 0) {
+      return 'No ending variant matched the current flags. Write the closing scene from the current state. Do not choose an ending yourself.';
+    }
+    const story = this.storyManager.getStory(session.session.story_id);
+    const variants = story && story.config && Array.isArray(story.config.ending_variants)
+      ? story.config.ending_variants
+      : [];
+    const byId = new Map(variants.filter(variant => variant && variant.id).map(variant => [variant.id, variant]));
+    const lines = ids.map(id => {
+      const variant = byId.get(id);
+      const description = variant && typeof variant.description === 'string' ? variant.description : '';
+      return description ? `- \`${id}\`: ${description}` : `- \`${id}\``;
+    });
+    return ['Recorded ending:', ...lines].join('\n');
   }
 
   async callLLM(prompt, session) {

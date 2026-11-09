@@ -48,6 +48,7 @@ async function makeBot(t, { sessions = [1], delays = {}, status = 'active', noBl
   const storyManager = { getStory: () => ({ title: 'The Herbalist\'s Choice', openingAction: 'OPENING', config: {} }) };
   const sessionManager = new SessionManager(dir, storyManager);
   const prompted = [];
+  const recordedEndings = [];
   const narrationService = {
     buildPrompt: (session, action) => {
       prompted.push({ sessionId: session.session.session_id, action });
@@ -65,6 +66,7 @@ async function makeBot(t, { sessions = [1], delays = {}, status = 'active', noBl
       session.choice_history.push(action);
     },
     evaluateEndConditions: () => endConditionsMet,
+    recordEnding: (session) => { recordedEndings.push(session.session.session_id); },
   };
   const discordUI = { splitMessage: (text) => [text] };
 
@@ -77,7 +79,7 @@ async function makeBot(t, { sessions = [1], delays = {}, status = 'active', noBl
   });
 
   const readSaved = async (n) => JSON.parse(await fs.readFile(path.join(dir, `session-${USER_ID}-${n}.json`), 'utf8'));
-  return { bot, dir, prompted, readSaved, warnings };
+  return { bot, dir, prompted, readSaved, warnings, recordedEndings };
 }
 
 const CLARIFICATIONS = [
@@ -306,13 +308,14 @@ test('a message the bot cannot read gets a canned clarification and leaves the s
 // --- The final turn ------------------------------------------------------------
 
 test('a healthcheck reply on the final turn keeps the story concluding', async (t) => {
-  const { bot, readSaved } = await makeBot(t, { status: 'concluding', noBlock: ['you there?'], endConditionsMet: true });
+  const { bot, readSaved, recordedEndings } = await makeBot(t, { status: 'concluding', noBlock: ['you there?'], endConditionsMet: true });
   const message = fakeMessage('you there?');
 
   await bot.handleMessage(message);
 
   assert.deepStrictEqual(message.replies, ['You: you there?']);
   assert.strictEqual((await readSaved(1)).session.status, 'concluding');
+  assert.deepStrictEqual(recordedEndings, []);
 });
 
 test('a story turn on the final turn completes the story', async (t) => {
@@ -334,11 +337,21 @@ test('the story waits through a healthcheck, then ends on the next real action',
 });
 
 test('an active story moves to concluding once the end conditions are met', async (t) => {
-  const { bot, readSaved } = await makeBot(t, { endConditionsMet: true });
+  const { bot, readSaved, recordedEndings } = await makeBot(t, { endConditionsMet: true });
 
   await bot.handleMessage(fakeMessage('I give Elara the tea'));
 
   assert.strictEqual((await readSaved(1)).session.status, 'concluding');
+  assert.deepStrictEqual(recordedEndings, ['session-42-1']);
+});
+
+test('an opening that meets the end conditions records the ending', async (t) => {
+  const { bot, readSaved, recordedEndings } = await makeBot(t, { sessions: [], endConditionsMet: true });
+
+  await bot.handleButtonInteraction(fakeButton('start_story_the-herbalists-choice'));
+
+  assert.strictEqual((await readSaved(1)).session.status, 'concluding');
+  assert.deepStrictEqual(recordedEndings, ['session-42-1']);
 });
 
 // --- Junk filter -------------------------------------------------------------
