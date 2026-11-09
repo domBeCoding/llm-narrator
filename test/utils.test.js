@@ -19,6 +19,12 @@ test('isGibberish: rejects keyboard row mashing', () => {
   assert.strictEqual(isGibberish('asdfgh'), true);
   assert.strictEqual(isGibberish('qwertyuiop'), true);
   assert.strictEqual(isGibberish('zxcvbnm'), true);
+  // Straight walks, and the same walks typed backwards.
+  // mnbv is the bottom row backwards. Four letters, so only the walk check rejects it.
+  assert.strictEqual(isGibberish('qwerty'), true);
+  assert.strictEqual(isGibberish('ytrewq'), true);
+  assert.strictEqual(isGibberish('hgfdsa'), true);
+  assert.strictEqual(isGibberish('mnbv'), true);
 });
 
 test('isGibberish: rejects digit-only and letterless input', () => {
@@ -60,17 +66,14 @@ test('isGibberish: is case-insensitive', () => {
   assert.strictEqual(isGibberish('I Look Around'), false);
 });
 
-// --- Known defects -----------------------------------------------------------
-
-test('BUG: single words made only of top-row letters are wrongly rejected', { todo: true }, () => {
-  // "quiet", "poetry", "tree" are all spelled with letters from qwertyuiop,
-  // so /^[qwertyuiop]+$/i flags them as keyboard mashing.
-  assert.strictEqual(isGibberish('quiet'), false);
-  assert.strictEqual(isGibberish('poetry'), false);
-  assert.strictEqual(isGibberish('tree'), false);
+test('isGibberish: accepts words made only of top-row letters', () => {
+  for (const word of ['quiet', 'poetry', 'tree', 'pour', 'type']) {
+    assert.strictEqual(isGibberish(word), false, `"${word}" should be accepted`);
+  }
 });
 
-test('BUG: single words made only of home-row letters are wrongly rejected', { todo: true }, () => {
-  assert.strictEqual(isGibberish('flask'), false);
-  assert.strictEqual(isGibberish('salads'), false);
+test('isGibberish: accepts words made only of home-row letters', () => {
+  for (const word of ['flask', 'salads', 'glass']) {
+    assert.strictEqual(isGibberish(word), false, `"${word}" should be accepted`);
+  }
 });

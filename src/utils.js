@@ -1,3 +1,25 @@
+// QWERTY rows, including the punctuation keys on the home and bottom rows.
+const KEYBOARD_ROWS = [
+  'qwertyuiop',
+  "asdfghjkl;'",
+  'zxcvbnm,./',
+];
+
+// True when the whole string is a straight walk along one row, forwards or
+// backwards (qwerty, ytrewq). Sharing a row is not enough: flask and pour
+// use one row, but they do not walk along it.
+function isSequentialKeyboardWalk(text) {
+  const value = text.toLowerCase();
+  if (value.length < 2) return false;
+
+  for (const row of KEYBOARD_ROWS) {
+    const reversed = [...row].reverse().join('');
+    if (row.includes(value) || reversed.includes(value)) return true;
+  }
+
+  return false;
+}
+
 function isGibberish(text) {
   const cleaned = text.toLowerCase().trim();
 
@@ -14,12 +36,11 @@ function isGibberish(text) {
 
   // Common gibberish patterns
   const gibberishPatterns = [
-    /^[asdfghjkl;']+$/i,  // home row mashing
-    /^[qwertyuiop]+$/i,   // top row mashing
-    /^[zxcvbnm,./]+$/i,   // bottom row mashing
     /^\d+$/,              // just numbers
     /^[^a-z]*$/i,         // no letters at all
   ];
+
+  if (isSequentialKeyboardWalk(cleaned)) return true;
 
   for (const pattern of gibberishPatterns) {
     if (pattern.test(cleaned)) return true;
