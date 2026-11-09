@@ -151,8 +151,49 @@ test('parseResponse: returns null stateUpdate when the JSON block is malformed',
   const { narration, stateUpdate } = svc.parseResponse(raw);
 
   assert.strictEqual(stateUpdate, null);
-  // Narration is left untouched (including the bad block) when parsing fails.
-  assert.match(narration, /Prose here\./);
+  assert.strictEqual(narration, 'Prose here.');
+  assert.doesNotMatch(narration, /```/);
+  assert.doesNotMatch(narration, /not valid json/);
+});
+
+test('parseResponse: reads and strips an upper-case JSON fence', () => {
+  const svc = new NarrationService(makeStoryManagerStub(), 'key');
+  const raw = [
+    'You step into the apothecary.',
+    '',
+    '========',
+    '',
+    'What do you do?',
+    '',
+    '```JSON',
+    '{"reader": {"location": "apothecary"}}',
+    '```',
+  ].join('\n');
+
+  const { narration, stateUpdate } = svc.parseResponse(raw);
+
+  assert.deepStrictEqual(stateUpdate, { reader: { location: 'apothecary' } });
+  assert.strictEqual(narration, 'You step into the apothecary.\n\n========\n\nWhat do you do?');
+  assert.doesNotMatch(narration, /```/);
+  assert.doesNotMatch(narration, /location/);
+});
+
+test('parseResponse: strips a block with a trailing comma and returns null stateUpdate', () => {
+  const svc = new NarrationService(makeStoryManagerStub(), 'key');
+  const raw = [
+    'You step into the apothecary.',
+    '',
+    '```json',
+    '{"reader": {"location": "apothecary",}}',
+    '```',
+  ].join('\n');
+
+  const { narration, stateUpdate } = svc.parseResponse(raw);
+
+  assert.strictEqual(stateUpdate, null);
+  assert.strictEqual(narration, 'You step into the apothecary.');
+  assert.doesNotMatch(narration, /```/);
+  assert.doesNotMatch(narration, /location/);
 });
 
 test('parseResponse: strips bookkeeping markers from the narration', () => {

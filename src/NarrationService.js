@@ -3,7 +3,9 @@ const { validateStateUpdate } = require('./StateValidator');
 
 const NARRATOR_SYSTEM = 'You are the Narrator, a Dungeon Master for interactive storytelling.';
 const REQUEST_TIMEOUT_MS = 60000;
-const JSON_BLOCK = /```json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```/;
+// The language tag matches in any case. Windows line endings and spaces after
+// the tag are tolerated.
+const JSON_BLOCK = /```json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```/i;
 
 // Closes every user message. It is the same text every turn, so the prompt
 // stays cacheable; the AI, not the code, decides which case the message is.
@@ -85,16 +87,17 @@ class NarrationService {
   }
 
   parseResponse(response) {
-    // Tolerates Windows line endings and trailing spaces after the fence.
     const jsonMatch = response.match(JSON_BLOCK);
 
     let narration = response;
     let stateUpdate = null;
 
     if (jsonMatch) {
+      // Remove the block before parsing so broken JSON never reaches the
+      // player. Unusable JSON leaves stateUpdate null.
+      narration = response.replace(JSON_BLOCK, '').trim();
       try {
         stateUpdate = JSON.parse(jsonMatch[1]);
-        narration = response.replace(JSON_BLOCK, '').trim();
       } catch (e) {
         console.error('Failed to parse state update JSON:', e);
       }
