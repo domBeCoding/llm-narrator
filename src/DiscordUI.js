@@ -6,25 +6,52 @@ class DiscordUI {
     this.sessionManager = sessionManager;
   }
 
+  // Discord rejects an empty message and anything over maxLength (2000).
+  // Pack on newline boundaries first. A line that is still too long breaks
+  // at the last space in the window, or at maxLength when it has no space.
+  // A mid-line break does not insert a character. Empty input stays [''].
   splitMessage(text, maxLength = 2000) {
     if (text.length <= maxLength) return [text];
 
     const chunks = [];
-    let currentChunk = '';
+    let start = 0;
 
-    const lines = text.split('\n');
-
-    for (const line of lines) {
-      if (currentChunk.length + line.length + 1 > maxLength) {
-        chunks.push(currentChunk);
-        currentChunk = line;
-      } else {
-        currentChunk += (currentChunk ? '\n' : '') + line;
+    while (start < text.length) {
+      if (text.length - start <= maxLength) {
+        chunks.push(text.slice(start));
+        break;
       }
-    }
 
-    if (currentChunk) {
-      chunks.push(currentChunk);
+      const windowEnd = start + maxLength;
+
+      // The next character is a newline, so the window is complete lines.
+      if (text[windowEnd] === '\n') {
+        chunks.push(text.slice(start, windowEnd));
+        start = windowEnd + 1;
+        if (start === text.length) chunks.push('\n');
+        continue;
+      }
+
+      const window = text.slice(start, windowEnd);
+      const newlineAt = window.lastIndexOf('\n');
+      if (newlineAt > 0) {
+        chunks.push(text.slice(start, start + newlineAt));
+        start += newlineAt + 1;
+        continue;
+      }
+
+      // A newline at the start of the window cannot be a left-hand piece
+      // without an empty chunk. Keep it on its own so the next line packs whole.
+      if (newlineAt === 0) {
+        chunks.push('\n');
+        start += 1;
+        continue;
+      }
+
+      const spaceAt = window.lastIndexOf(' ');
+      const cut = spaceAt >= 0 ? spaceAt + 1 : maxLength;
+      chunks.push(text.slice(start, start + cut));
+      start += cut;
     }
 
     return chunks;
