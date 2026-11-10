@@ -111,7 +111,10 @@ class SessionManager {
 
   /**
    * The number of the session the user's messages go to: the one they chose,
-   * or the newest if there is no valid choice. Null if they have no sessions.
+   * when that choice names a session that exists, even if it is completed.
+   * With no valid choice, the newest session whose status is not completed
+   * (active or concluding). If every session is completed, the newest.
+   * Null if they have no sessions.
    */
   async getActiveSessionNumber(userId) {
     try {
@@ -123,11 +126,15 @@ class SessionManager {
         return sessionNumber;
       }
     } catch (e) {
-      // No choice recorded, or it is unreadable: fall back to the newest.
+      // No choice recorded, or it is unreadable: fall back below.
     }
 
     const sessions = await this.getUserSessions(userId);
-    return sessions.length === 0 ? null : sessions[0].sessionNumber;
+    if (sessions.length === 0) return null;
+    // getUserSessions is already newest-first and includes status, so the
+    // fallback does not open the session files again.
+    const unfinished = sessions.find(session => session.status !== 'completed');
+    return (unfinished || sessions[0]).sessionNumber;
   }
 
   async getActiveSession(userId) {

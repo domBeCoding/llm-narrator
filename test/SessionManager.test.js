@@ -455,6 +455,56 @@ test('getActiveSession: falls back to the newest when the active session record 
   assert.strictEqual(session.session.session_id, 'session-42-2');
 });
 
+test('getActiveSession: prefers an older active session over a newer completed one', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1, { status: 'active' });
+  await writeSession(dir, '42', 2, { status: 'completed' });
+
+  const session = await manager.getActiveSession('42');
+
+  assert.strictEqual(session.session.status, 'active');
+  assert.strictEqual(session.session.session_id, 'session-42-1');
+});
+
+test('getActiveSession: honours an explicit pointer to a completed session', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1, { status: 'active' });
+  await writeSession(dir, '42', 2, { status: 'completed' });
+  await manager.setActiveSession('42', 2);
+
+  const session = await manager.getActiveSession('42');
+
+  assert.strictEqual(session.session.session_id, 'session-42-2');
+  assert.strictEqual(session.session.status, 'completed');
+});
+
+test('getActiveSession: returns the newest session when every session is completed', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1, { status: 'completed' });
+  await writeSession(dir, '42', 3, { status: 'completed' });
+
+  const session = await manager.getActiveSession('42');
+
+  assert.strictEqual(session.session.session_id, 'session-42-3');
+  assert.strictEqual(session.session.status, 'completed');
+});
+
+test('getActiveSession: an older concluding session beats a newer completed one', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1, { status: 'concluding' });
+  await writeSession(dir, '42', 4, { status: 'completed' });
+
+  const session = await manager.getActiveSession('42');
+
+  assert.strictEqual(session.session.status, 'concluding');
+  assert.strictEqual(session.session.session_id, 'session-42-1');
+});
+
+test('getActiveSessionNumber: returns null when the user has no sessions', async (t) => {
+  const { manager } = await makeManager(t);
+  assert.strictEqual(await manager.getActiveSessionNumber('42'), null);
+});
+
 // --- One turn at a time per reader ------------------------------------------
 
 test('withUserLock: runs one user\'s calls in order, one at a time', async (t) => {
@@ -556,19 +606,6 @@ test('withUserLock: a later call queues normally once a nested call has finished
 });
 
 // --- Known defects -----------------------------------------------------------
-
-test('BUG: getActiveSession returns a completed session, hiding an older active one', { todo: true }, async (t) => {
-  // handleMessage() uses getActiveSession() and then refuses to play if the
-  // status is 'completed'. Because "active" really means "highest numbered",
-  // a finished session permanently blocks an earlier unfinished one.
-  const { dir, manager } = await makeManager(t);
-  await writeSession(dir, '42', 1, { status: 'active' });
-  await writeSession(dir, '42', 2, { status: 'completed' });
-
-  const session = await manager.getActiveSession('42');
-
-  assert.strictEqual(session.session.status, 'active');
-});
 
 test('BUG: createSession ignores the username it is given', { todo: true }, async (t) => {
   // `username` is accepted but never stored, so the narrator cannot address the
