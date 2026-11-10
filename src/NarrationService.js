@@ -24,7 +24,11 @@ class NarrationService {
     if (!ClientClass) {
       throw new Error(`Unknown LLM provider: ${provider}`);
     }
-    this.llmClient = options.llmClient || new ClientClass(apiKey, { timeoutMs: this.timeoutMs });
+    this.llmClient = options.llmClient || new ClientClass(apiKey, {
+      timeoutMs: this.timeoutMs,
+      retryDelayMs: options.retryDelayMs,
+      sleep: options.sleep,
+    });
   }
 
   get apiKey() {

@@ -42,6 +42,7 @@ function stubFetch(t, responses) {
     return {
       ok: r.ok !== false,
       status: r.status || 200,
+      headers: new Headers(r.headers || {}),
       json: async () => r.json,
       text: async () => r.text || '',
     };
@@ -49,6 +50,35 @@ function stubFetch(t, responses) {
 
   t.after(() => { global.fetch = original; });
   return bodies;
+}
+
+// Retries wait by default. Tests pass an instant sleep unless they are
+// asserting the delay itself.
+function kimiService(options = {}) {
+  return new NarrationService(storyManagerStub, 'test-key', {
+    sleep: async () => {},
+    ...options,
+  });
+}
+
+// AbortSignal.timeout does not keep the event loop alive. A real hung fetch
+// does, because the socket is still open. Hold a timer until the signal
+// aborts so a stubbed hang still reports the timeout.
+function hangUntilAbort(signal) {
+  return new Promise((_resolve, reject) => {
+    const keepAlive = setTimeout(() => {}, 2 ** 31 - 1);
+    const fail = () => {
+      clearTimeout(keepAlive);
+      const err = new Error('The operation was aborted');
+      err.name = 'TimeoutError';
+      reject(err);
+    };
+    if (signal.aborted) {
+      fail();
+      return;
+    }
+    signal.addEventListener('abort', fail, { once: true });
+  });
 }
 
 test('callLLM: returns the text block on a normal completion', async (t) => {
@@ -77,14 +107,20 @@ test('callLLM: sends the api key, model, tools and prompt', async (t) => {
 });
 
 test('callLLM: throws with the status code when the API returns an error', async (t) => {
-  stubFetch(t, [{ ok: false, status: 500, text: 'internal boom' }]);
+  // A 500 is retried once. Both attempts have to fail, or the second fetch
+  // runs off the end of the queue and hides this error text.
+  const bodies = stubFetch(t, [
+    { ok: false, status: 500, text: 'internal boom' },
+    { ok: false, status: 500, text: 'internal boom' },
+  ]);
 
-  const svc = new NarrationService(storyManagerStub, 'test-key');
+  const svc = kimiService();
 
   await assert.rejects(
     () => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null)),
     /Kimi API error: 500 - internal boom/
   );
+  assert.strictEqual(bodies.length, 2);
 });
 
 test('callLLM: throws when the response carries no text block', async (t) => {
@@ -170,7 +206,8 @@ test('callLLM: breaks out if tool_use is signalled with no tool_use block', asyn
 });
 
 test('callLLM: throws if a tool continuation call fails', async (t) => {
-  stubFetch(t, [
+  // A 429 on a continuation is retried once, same as the initial request.
+  const bodies = stubFetch(t, [
     {
       json: {
         stop_reason: 'tool_use',
@@ -178,14 +215,16 @@ test('callLLM: throws if a tool continuation call fails', async (t) => {
       },
     },
     { ok: false, status: 429, text: 'rate limited' },
+    { ok: false, status: 429, text: 'rate limited' },
   ]);
 
-  const svc = new NarrationService(storyManagerStub, 'test-key');
+  const svc = kimiService();
 
   await assert.rejects(
     () => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput('x')),
     /Kimi API error on tool continuation: 429 - rate limited/
   );
+  assert.strictEqual(bodies.length, 3);
 });
 
 test('callLLM: prepends conversation history as alternating messages', async (t) => {
@@ -336,16 +375,10 @@ test('callLLM: passes an abort signal to fetch', async (t) => {
 test('callLLM: aborts a hung request and reports a timeout', async (t) => {
   const original = global.fetch;
   // Honour the abort signal the way undici does.
-  global.fetch = (url, opts) => new Promise((_resolve, reject) => {
-    opts.signal.addEventListener('abort', () => {
-      const err = new Error('The operation was aborted');
-      err.name = 'TimeoutError';
-      reject(err);
-    });
-  });
+  global.fetch = (url, opts) => hangUntilAbort(opts.signal);
   t.after(() => { global.fetch = original; });
 
-  const svc = new NarrationService(storyManagerStub, 'test-key', { timeoutMs: 50 });
+  const svc = kimiService({ timeoutMs: 50 });
 
   await assert.rejects(
     () => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null)),
@@ -369,17 +402,11 @@ test('callLLM: reports a timeout during a tool continuation', async (t) => {
         text: async () => '',
       });
     }
-    return new Promise((_resolve, reject) => {
-      opts.signal.addEventListener('abort', () => {
-        const err = new Error('The operation was aborted');
-        err.name = 'TimeoutError';
-        reject(err);
-      });
-    });
+    return hangUntilAbort(opts.signal);
   };
   t.after(() => { global.fetch = original; });
 
-  const svc = new NarrationService(storyManagerStub, 'test-key', { timeoutMs: 50 });
+  const svc = kimiService({ timeoutMs: 50 });
 
   await assert.rejects(
     () => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput('x')),
@@ -389,10 +416,167 @@ test('callLLM: reports a timeout during a tool continuation', async (t) => {
 
 test('callLLM: propagates non-abort network errors unchanged', async (t) => {
   const original = global.fetch;
-  global.fetch = async () => { throw new Error('ECONNREFUSED'); };
+  let calls = 0;
+  // A network error is retried once, so fetch runs twice. The error that
+  // propagates is still the rejection from fetch, unchanged.
+  global.fetch = async () => {
+    calls += 1;
+    throw new Error('ECONNREFUSED');
+  };
   t.after(() => { global.fetch = original; });
 
-  const svc = new NarrationService(storyManagerStub, 'test-key');
+  const svc = kimiService();
 
   await assert.rejects(() => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null)), /ECONNREFUSED/);
+  assert.strictEqual(calls, 2);
+});
+
+function scene(text) {
+  return { json: { stop_reason: 'end_turn', content: [{ type: 'text', text }] } };
+}
+
+function recordSleep() {
+  const sleeps = [];
+  return { sleeps, sleep: async (ms) => { sleeps.push(ms); } };
+}
+
+// --- One retry ----------------------------------------------------------------
+// A timeout, a network error, HTTP 429 and HTTP 5xx are tried once more.
+// Any other 4xx is not. The wait is injectable so these tests do not sleep.
+
+test('callLLM: retries a 500 and then returns the scene', async (t) => {
+  const bodies = stubFetch(t, [
+    { ok: false, status: 500, text: 'internal boom' },
+    scene('The lantern steadies.'),
+  ]);
+  const warn = t.mock.method(console, 'warn', () => {});
+  const timing = recordSleep();
+  const svc = kimiService({ sleep: timing.sleep });
+
+  const result = await svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null));
+
+  assert.strictEqual(result, 'The lantern steadies.');
+  assert.strictEqual(bodies.length, 2);
+  assert.deepStrictEqual(timing.sleeps, [1000]);
+  assert.strictEqual(warn.mock.calls.length, 1);
+  const warning = String(warn.mock.calls[0].arguments[0]);
+  assert.match(warning, /Retrying Kimi initial request once \(HTTP 500\)/);
+  assert.ok(!warning.includes('test-key'));
+  assert.ok(!/retry-after/i.test(warning));
+  assert.ok(!/x-api-key/i.test(warning));
+});
+
+test('callLLM: a 429 with Retry-After 2 waits 2000ms', async (t) => {
+  const bodies = stubFetch(t, [
+    { ok: false, status: 429, text: 'slow down', headers: { 'Retry-After': '2' } },
+    scene('The page clears.'),
+  ]);
+  const timing = recordSleep();
+  const svc = kimiService({ sleep: timing.sleep });
+
+  const result = await svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null));
+
+  assert.strictEqual(result, 'The page clears.');
+  assert.strictEqual(bodies.length, 2);
+  assert.deepStrictEqual(timing.sleeps, [2000]);
+});
+
+test('callLLM: caps a Retry-After above 5 seconds at 5000ms', async (t) => {
+  stubFetch(t, [
+    { ok: false, status: 429, text: 'slow down', headers: { 'Retry-After': '30' } },
+    scene('On we go.'),
+  ]);
+  const timing = recordSleep();
+  const svc = kimiService({ sleep: timing.sleep });
+
+  const result = await svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null));
+
+  assert.strictEqual(result, 'On we go.');
+  assert.deepStrictEqual(timing.sleeps, [5000]);
+});
+
+test('callLLM: does not retry a 400', async (t) => {
+  const bodies = stubFetch(t, [
+    { ok: false, status: 400, text: 'bad request' },
+    scene('should not be fetched'),
+  ]);
+  const warn = t.mock.method(console, 'warn', () => {});
+  const timing = recordSleep();
+  const svc = kimiService({ sleep: timing.sleep });
+
+  await assert.rejects(
+    () => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null)),
+    /Kimi API error: 400 - bad request/
+  );
+  assert.strictEqual(bodies.length, 1);
+  assert.deepStrictEqual(timing.sleeps, []);
+  assert.strictEqual(warn.mock.calls.length, 0);
+});
+
+test('callLLM: two 503s throw after two fetches', async (t) => {
+  const bodies = stubFetch(t, [
+    { ok: false, status: 503, text: 'unavailable' },
+    { ok: false, status: 503, text: 'unavailable' },
+  ]);
+  const svc = kimiService();
+
+  await assert.rejects(
+    () => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null)),
+    /Kimi API error: 503 - unavailable/
+  );
+  assert.strictEqual(bodies.length, 2);
+});
+
+test('callLLM: retries a timeout and then returns the scene', async (t) => {
+  const original = global.fetch;
+  let calls = 0;
+  global.fetch = (url, opts) => {
+    calls += 1;
+    if (calls === 1) return hangUntilAbort(opts.signal);
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'The scene returns.' }] }),
+      text: async () => '',
+    });
+  };
+  t.after(() => { global.fetch = original; });
+
+  const timing = recordSleep();
+  const svc = kimiService({ timeoutMs: 30, sleep: timing.sleep });
+
+  const result = await svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null));
+
+  assert.strictEqual(result, 'The scene returns.');
+  assert.strictEqual(calls, 2);
+  assert.deepStrictEqual(timing.sleeps, [1000]);
+});
+
+test('callLLM: retries a tool continuation without counting a tool round', async (t) => {
+  const bodies = stubFetch(t, [
+    toolUseResponse('t1'),
+    toolUseResponse('t2'),
+    { ok: false, status: 503, text: 'unavailable' },
+    toolUseResponse('t3'),
+    scene('The path clears.'),
+  ]);
+  const warn = t.mock.method(console, 'warn', () => {});
+  const timing = recordSleep();
+  const svc = kimiService({ sleep: timing.sleep });
+
+  const result = await svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput('THE SAVED SCENE'));
+
+  // Three tool rounds still finish, and the retry is an extra fetch inside
+  // one of them. The cap does not substitute the saved scene.
+  assert.strictEqual(result, 'The path clears.');
+  assert.strictEqual(bodies.length, 5);
+  assert.strictEqual(bodies[2].messages.at(-1).content[0].type, 'tool_result');
+  assert.deepStrictEqual(bodies[2].messages, bodies[3].messages);
+  assert.deepStrictEqual(timing.sleeps, [1000]);
+  assert.strictEqual(warn.mock.calls.length, 1);
+  const warning = String(warn.mock.calls[0].arguments[0]);
+  assert.match(warning, /Retrying Kimi tool continuation request once \(HTTP 503\)/);
+  assert.doesNotMatch(warning, /round cap/);
+  assert.ok(!warning.includes('test-key'));
 });
