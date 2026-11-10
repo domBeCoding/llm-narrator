@@ -46,10 +46,15 @@ test('splitMessage: splits on line boundaries', () => {
   const ui = makeUI();
   const chunks = ui.splitMessage('aaaa\nbbbb\ncccc', 10);
 
-  assert.ok(chunks.length > 1);
+  assert.deepStrictEqual(chunks, ['aaaa\nbbbb', 'cccc']);
   for (const chunk of chunks) {
     assert.ok(chunk.length <= 10, `chunk of ${chunk.length} exceeds limit`);
   }
+});
+
+test('splitMessage: keeps packing short lines up to the limit', () => {
+  const ui = makeUI();
+  assert.deepStrictEqual(ui.splitMessage('aaa\nbbb\nccc', 7), ['aaa\nbbb', 'ccc']);
 });
 
 test('splitMessage: preserves all content across chunks', () => {
@@ -60,7 +65,10 @@ test('splitMessage: preserves all content across chunks', () => {
   const chunks = ui.splitMessage(text, DISCORD_LIMIT);
 
   assert.ok(chunks.length > 1, 'long text should be split');
+  // Every split here is on a newline, so joining with '\n' rebuilds the text.
+  // A mid-line split must not do that: it would insert a newline.
   assert.strictEqual(chunks.join('\n'), text);
+  assert.ok(canAlign(text, chunks));
 });
 
 test('splitMessage: every chunk respects the Discord limit for realistic narration', () => {
@@ -194,24 +202,138 @@ test('buildSessionSelectionUI: never exceeds the five-actionrow limit', async ()
   assert.ok(rows.length <= 5, `Discord allows at most 5 action rows, got ${rows.length}`);
 });
 
-// --- Known defects -----------------------------------------------------------
+function canAlign(text, chunks) {
+  const memo = new Map();
 
-test('BUG: a single line longer than the limit is not broken up', { todo: true }, () => {
-  // splitMessage only breaks on '\n'. One very long paragraph (which the model
-  // regularly produces) is pushed through whole and Discord rejects it.
-  const ui = makeUI();
-  const oneLongLine = 'a'.repeat(3000);
+  function walk(index, chunkIndex) {
+    const key = `${index}:${chunkIndex}`;
+    if (memo.has(key)) return memo.get(key);
 
-  for (const chunk of ui.splitMessage(oneLongLine, DISCORD_LIMIT)) {
-    assert.ok(chunk.length <= DISCORD_LIMIT, `chunk of ${chunk.length} exceeds ${DISCORD_LIMIT}`);
+    let ok = false;
+    if (chunkIndex === chunks.length) {
+      ok = index === text.length;
+    } else {
+      const chunk = chunks[chunkIndex];
+      if (chunk.length > 0) {
+        if (text.startsWith(chunk, index) && walk(index + chunk.length, chunkIndex + 1)) {
+          ok = true;
+        } else if (
+          text[index] === '\n'
+          && text.startsWith(chunk, index + 1)
+          && walk(index + chunk.length + 1, chunkIndex + 1)
+        ) {
+          ok = true;
+        }
+      }
+    }
+
+    memo.set(key, ok);
+    return ok;
   }
+
+  return walk(0, 0);
+}
+
+function assertWithinLimit(chunks, maxLength) {
+  for (const chunk of chunks) {
+    assert.ok(
+      chunk.length >= 1 && chunk.length <= maxLength,
+      `chunk length ${chunk.length} is outside 1..${maxLength}`
+    );
+  }
+}
+
+test('splitMessage: returns a single empty chunk for empty input', () => {
+  assert.deepStrictEqual(makeUI().splitMessage(''), ['']);
 });
 
-test('BUG: an oversized first line produces a leading empty chunk', { todo: true }, () => {
-  // currentChunk is still '' on the first iteration, so it gets pushed as-is.
+test('splitMessage: breaks a single line of 3000 characters', () => {
   const ui = makeUI();
+  const text = 'a'.repeat(3000);
+  const chunks = ui.splitMessage(text, DISCORD_LIMIT);
 
-  const chunks = ui.splitMessage('a'.repeat(3000), DISCORD_LIMIT);
+  assert.deepStrictEqual(chunks, ['a'.repeat(DISCORD_LIMIT), 'a'.repeat(1000)]);
+  assertWithinLimit(chunks, DISCORD_LIMIT);
+  assert.strictEqual(chunks.join(''), text);
+  assert.notStrictEqual(chunks.join('\n'), text);
+});
 
-  assert.ok(!chunks.includes(''), 'Discord rejects empty messages');
+test('splitMessage: an oversized first line followed by more lines has no empty chunk', () => {
+  const ui = makeUI();
+  const text = `${'a'.repeat(3000)}\nsecond line\nthird line`;
+  const chunks = ui.splitMessage(text, DISCORD_LIMIT);
+
+  assert.deepStrictEqual(chunks, [
+    'a'.repeat(DISCORD_LIMIT),
+    `${'a'.repeat(1000)}\nsecond line\nthird line`,
+  ]);
+  assert.ok(!chunks.includes(''));
+  assertWithinLimit(chunks, DISCORD_LIMIT);
+  assert.ok(canAlign(text, chunks));
+});
+
+test('splitMessage: breaks a line that is one character over the limit', () => {
+  const ui = makeUI();
+  const text = 'b'.repeat(DISCORD_LIMIT + 1);
+  const chunks = ui.splitMessage(text);
+
+  assert.deepStrictEqual(chunks, ['b'.repeat(DISCORD_LIMIT), 'b']);
+  assert.strictEqual(chunks.join(''), text);
+});
+
+test('splitMessage: breaks a long line at the last space inside the window', () => {
+  const ui = makeUI();
+  const text = `${'a'.repeat(1980)} ${'b'.repeat(30)}`;
+  const chunks = ui.splitMessage(text, DISCORD_LIMIT);
+
+  assert.deepStrictEqual(chunks, [`${'a'.repeat(1980)} `, 'b'.repeat(30)]);
+  assert.strictEqual(chunks.join(''), text);
+  assertWithinLimit(chunks, DISCORD_LIMIT);
+});
+
+test('splitMessage: prefers a space over a hard cut', () => {
+  const ui = makeUI();
+  const chunks = ui.splitMessage('hello world', 8);
+
+  assert.deepStrictEqual(chunks, ['hello ', 'world']);
+  assert.strictEqual(chunks.join(''), 'hello world');
+});
+
+test('splitMessage: hard-cuts a long line when the window has no space', () => {
+  const ui = makeUI();
+  const text = `${'a'.repeat(12)} b`;
+  const chunks = ui.splitMessage(text, 10);
+
+  assert.deepStrictEqual(chunks, ['a'.repeat(10), 'aa b']);
+  assert.strictEqual(chunks.join(''), text);
+});
+
+test('splitMessage: a full line followed by more text does not start with an empty chunk', () => {
+  const ui = makeUI();
+  const text = `${'a'.repeat(DISCORD_LIMIT)}\nnext`;
+  const chunks = ui.splitMessage(text);
+
+  assert.deepStrictEqual(chunks, ['a'.repeat(DISCORD_LIMIT), 'next']);
+  assert.ok(!chunks.includes(''));
+  assert.strictEqual(chunks.join('\n'), text);
+});
+
+test('splitMessage: breaks an oversized line that follows a short one', () => {
+  const ui = makeUI();
+  const text = `hi\n${'a'.repeat(12)}`;
+  const chunks = ui.splitMessage(text, 10);
+
+  assert.deepStrictEqual(chunks, ['hi', 'a'.repeat(10), 'aa']);
+  assert.ok(canAlign(text, chunks));
+  assertWithinLimit(chunks, 10);
+});
+
+test('splitMessage: keeps a leading newline when the text must be split', () => {
+  const ui = makeUI();
+  const text = `\n${'a'.repeat(10)}\n${'b'.repeat(10)}`;
+  const chunks = ui.splitMessage(text, 10);
+
+  assert.deepStrictEqual(chunks, ['\n', 'a'.repeat(10), 'b'.repeat(10)]);
+  assert.ok(canAlign(text, chunks));
+  assertWithinLimit(chunks, 10);
 });
