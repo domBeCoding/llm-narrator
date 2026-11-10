@@ -1,6 +1,9 @@
 # Runtime image only. stories/ and prompts/ are not listed here, so they are copied.
+# Ignore saved sessions, then put the template back. Docker will not re-include
+# a file when its parent directory is ignored, so this is sessions/* rather than sessions.
 node_modules
-sessions
+sessions/*
+!sessions/session-template.json
 .git
 .env*
 test

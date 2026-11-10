@@ -40,7 +40,10 @@ async function main() {
   await bot.init();
 }
 
-if (require.main === module) {
+// Start on every launch: node, pm2 fork, systemd, and the Docker command.
+// pm2 fork mode does not mark this file as the process entry, so startup
+// is not gated on that. Tests set NARRA_SKIP_START=1, and nothing else does.
+if (process.env.NARRA_SKIP_START !== '1') {
   main().catch((error) => {
     console.error('Failed to start narrator bot:', error);
     process.exit(1);

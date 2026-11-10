@@ -2,9 +2,12 @@
 // Dummy values such as 'test-token' are not real keys, and they are never logged.
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
+const { spawn } = require('node:child_process');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+
+const SessionManager = require('../src/SessionManager');
 
 const ssm = require('@aws-sdk/client-ssm');
 const OriginalSSMClient = ssm.SSMClient;
@@ -289,10 +292,125 @@ describe('Fly hosting secrets and sessions', { concurrency: 1 }, () => {
     assert.strictEqual(path.basename(expected), 'sessions');
   });
 
-  test('index.js creates SESSIONS_DIR from the environment or ./sessions', async (t) => {
+  test('index.js starts on load unless NARRA_SKIP_START=1', async (t) => {
     saveEnv(t);
     const source = await fs.readFile(path.join(__dirname, '..', 'index.js'), 'utf8');
     assert.match(source, /resolveSessionsDir\(\s*process\.env,\s*path\.join\(__dirname, 'sessions'\)\s*\)/);
     assert.match(source, /ensureSessionsDir\(/);
+    assert.match(source, /NARRA_SKIP_START/);
+    assert.match(source, /if \(process\.env\.NARRA_SKIP_START !== '1'\)/);
+    assert.doesNotMatch(source, /require\.main\s*===\s*module/);
+  });
+
+  test('index.js starts when NARRA_SKIP_START is unset', async (t) => {
+    saveEnv(t);
+    const started = await runIndex(t, {});
+    assert.strictEqual(started.code, 0);
+    assert.match(started.stdout, /Logging in to Discord/);
+    assert.match(started.stdout, /NarratorBot is online as Narrator#0001/);
+    assert.doesNotMatch(started.stdout, /SSM_CLIENT/);
+    assertNoStartupSecrets(started);
+  });
+
+  test('index.js does not start when NARRA_SKIP_START=1', async (t) => {
+    saveEnv(t);
+    const skipped = await runIndex(t, { NARRA_SKIP_START: '1' });
+    assert.strictEqual(skipped.code, 0);
+    assert.doesNotMatch(skipped.stdout, /Logging in to Discord/);
+    assert.doesNotMatch(skipped.stdout, /NarratorBot is online/);
+    assert.doesNotMatch(skipped.stdout, /SSM_CLIENT/);
+    assertNoStartupSecrets(skipped);
+  });
+
+  test('creating a new game works with an empty SESSIONS_DIR', async (t) => {
+    saveEnv(t);
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'narrator-empty-sessions-'));
+    t.after(() => fs.rm(dir, { recursive: true, force: true }));
+    assert.deepStrictEqual(await fs.readdir(dir), []);
+
+    const templatePath = path.join(__dirname, '..', 'sessions', 'session-template.json');
+    const templateBefore = await fs.readFile(templatePath);
+    const manager = new SessionManager(dir, {
+      getStory: () => ({ title: 'The Herbalist\'s Choice' }),
+    });
+
+    const { session, sessionNumber } = await manager.createSession('42', 'reader', 'the-herbalists-choice');
+
+    assert.strictEqual(sessionNumber, 1);
+    assert.strictEqual(session.session.session_id, 'session-42-1');
+    assert.strictEqual(session.session.user_id, '42');
+    assert.strictEqual(session.session.story_id, 'the-herbalists-choice');
+    const saved = JSON.parse(await fs.readFile(path.join(dir, 'session-42-1.json'), 'utf8'));
+    assert.strictEqual(saved.session.session_id, 'session-42-1');
+    assert.deepStrictEqual(await fs.readFile(templatePath), templateBefore);
+    const names = await fs.readdir(dir);
+    assert.ok(!names.includes('session-template.json'));
+  });
+
+  test('the Docker image keeps session-template.json', async (t) => {
+    saveEnv(t);
+    const ignore = await fs.readFile(path.join(__dirname, '..', '.dockerignore'), 'utf8');
+    assert.match(ignore, /^sessions\/\*$/m);
+    assert.match(ignore, /^!sessions\/session-template\.json$/m);
+    assert.doesNotMatch(ignore, /^sessions$/m);
   });
 });
+
+const REPO_ROOT = path.join(__dirname, '..');
+const PRELOAD = path.join(__dirname, 'preload-no-network.js');
+
+function childEnv(sessionsDir, extra) {
+  const env = { ...process.env };
+  delete env.NARRA_SKIP_START;
+  delete env.NODE_OPTIONS;
+  delete env.AWS_ACCESS_KEY_ID;
+  delete env.AWS_SECRET_ACCESS_KEY;
+  delete env.AWS_SESSION_TOKEN;
+  delete env.AWS_PROFILE;
+  delete env.AWS_REGION;
+  env.DISCORD_TOKEN = 'test-token';
+  env.LLM_API_KEY = 'test-llm-key';
+  env.TYPESAFE_API_KEY = 'test-typesafe-key';
+  env.SESSIONS_DIR = sessionsDir;
+  Object.assign(env, extra);
+  return env;
+}
+
+function redactStartup(text) {
+  return String(text)
+    .replaceAll('test-token', '[redacted]')
+    .replaceAll('test-llm-key', '[redacted]')
+    .replaceAll('test-typesafe-key', '[redacted]');
+}
+
+function assertNoStartupSecrets(result) {
+  const combined = `${result.stdout}\n${result.stderr}`;
+  for (const secret of SECRET_VALUES) {
+    assert.ok(!combined.includes(secret), 'startup output contains a secret value');
+  }
+}
+
+function runIndex(t, extra) {
+  return fs.mkdtemp(path.join(os.tmpdir(), 'narrator-start-')).then((sessionsDir) => {
+    t.after(() => fs.rm(sessionsDir, { recursive: true, force: true }));
+    return new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['--require', PRELOAD, path.join(REPO_ROOT, 'index.js')], {
+        cwd: REPO_ROOT,
+        env: childEnv(sessionsDir, extra),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        reject(new Error(`index.js did not exit\n${redactStartup(stdout)}\n${redactStartup(stderr)}`));
+      }, 8000);
+      child.stdout.on('data', (chunk) => { stdout += chunk; });
+      child.stderr.on('data', (chunk) => { stderr += chunk; });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        resolve({ code, stdout, stderr });
+      });
+    });
+  });
+}

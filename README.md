@@ -89,9 +89,7 @@ fly volumes create narra_sessions --region lhr --size 1
 fly secrets set DISCORD_TOKEN=... LLM_API_KEY=... TYPESAFE_API_KEY=...
 ```
 
-The volume is mounted at `/data`. `SESSIONS_DIR` is `/data/sessions`, and the bot creates that directory when it starts.
-
-The image does not include the `sessions` folder. A new volume therefore has no `session-template.json`. Copy that file onto the volume before anyone starts a new game, because new games are created from it.
+The volume is mounted at `/data`. `SESSIONS_DIR` is `/data/sessions`, and the bot creates that directory when it starts. A fresh volume works as is. New games are seeded from `session-template.json` in the repo, and that file is copied into the image.
 
 ### Deploy
 
@@ -118,7 +116,7 @@ After `fly scale count 0`, start a machine again with `fly scale count 1` or `fl
 
 ### Cost
 
-These costs are approximate. The machine is about $0.0058 an hour while it is running, and the 1GB volume is about $0.15 a month even when the machine is stopped.
+Fly publishes its prices at https://fly.io/docs/about/pricing/.
 
 ## Testing
 

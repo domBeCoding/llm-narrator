@@ -160,7 +160,11 @@ class SessionManager {
 
     const sessionNumber = await this.getNextSessionNumber(userId);
 
-    const templateData = await fs.readFile(path.join(this.sessionsDir, 'session-template.json'), 'utf8');
+    // The template ships next to the code. sessionsDir may be an empty volume.
+    const templateData = await fs.readFile(
+      path.join(__dirname, '..', 'sessions', 'session-template.json'),
+      'utf8'
+    );
     const session = JSON.parse(templateData);
 
     session.session.session_id = `session-${userId}-${sessionNumber}`;
