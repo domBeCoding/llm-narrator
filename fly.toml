@@ -1,0 +1,17 @@
+# Placeholder app name for testing. No secrets belong in this file.
+# One outbound worker: there is no [http_service]. Stop the machine when it is idle.
+
+app = "narra-bot"
+primary_region = "lhr"
+
+[env]
+  SESSIONS_DIR = "/data/sessions"
+
+[mounts]
+  source = "narra_sessions"
+  destination = "/data"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"

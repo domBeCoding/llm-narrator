@@ -6,29 +6,46 @@ const SessionManager = require('./src/SessionManager');
 const NarrationService = require('./src/NarrationService');
 const DiscordUI = require('./src/DiscordUI');
 const Bot = require('./src/Bot');
+const { resolveSessionsDir, ensureSessionsDir } = require('./src/sessionsDir');
 
 const PROMPTS_DIR = path.join(__dirname, 'prompts');
-const SESSIONS_DIR = path.join(__dirname, 'sessions');
 const STORIES_DIR = path.join(__dirname, 'stories');
 
-const llmProvider = process.env.LLM_PROVIDER || 'kimi';
-const llmCredentialsSecret = process.env.LLM_CREDENTIALS_SECRET || `${llmProvider}-credentials`;
+async function main() {
+  // SESSIONS_DIR when it is set, otherwise ./sessions beside this file.
+  const SESSIONS_DIR = await ensureSessionsDir(
+    resolveSessionsDir(process.env, path.join(__dirname, 'sessions'))
+  );
 
-const secretsManager = new SecretsManager();
-const storyManager = new StoryManager(STORIES_DIR, PROMPTS_DIR);
-const sessionManager = new SessionManager(SESSIONS_DIR, storyManager);
-const narrationService = new NarrationService(storyManager, null, {
-  provider: llmProvider,
-});
-const discordUI = new DiscordUI(storyManager, sessionManager);
+  const llmProvider = process.env.LLM_PROVIDER || 'kimi';
+  const llmCredentialsSecret = process.env.LLM_CREDENTIALS_SECRET || `${llmProvider}-credentials`;
 
-const bot = new Bot({
-  secretsManager,
-  storyManager,
-  sessionManager,
-  narrationService,
-  discordUI,
-  llmCredentialsSecret,
-});
+  const secretsManager = new SecretsManager();
+  const storyManager = new StoryManager(STORIES_DIR, PROMPTS_DIR);
+  const sessionManager = new SessionManager(SESSIONS_DIR, storyManager);
+  const narrationService = new NarrationService(storyManager, null, {
+    provider: llmProvider,
+  });
+  const discordUI = new DiscordUI(storyManager, sessionManager);
 
-bot.init();
+  const bot = new Bot({
+    secretsManager,
+    storyManager,
+    sessionManager,
+    narrationService,
+    discordUI,
+    llmCredentialsSecret,
+  });
+
+  await bot.init();
+}
+
+// Start on every launch: node, pm2 fork, systemd, and the Docker command.
+// pm2 fork mode does not mark this file as the process entry, so startup
+// is not gated on that. Tests set NARRA_SKIP_START=1, and nothing else does.
+if (process.env.NARRA_SKIP_START !== '1') {
+  main().catch((error) => {
+    console.error('Failed to start narrator bot:', error);
+    process.exit(1);
+  });
+}
