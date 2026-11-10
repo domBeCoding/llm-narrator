@@ -3,6 +3,12 @@ const path = require('path');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 
+/** session-<userId>-<n>.json, and not a temp or any other stray file. */
+function sessionFilePattern(userId) {
+  const escaped = String(userId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^session-${escaped}-(\\d+)\\.json$`);
+}
+
 class SessionManager {
   constructor(sessionsDir, storyManager) {
     this.sessionsDir = sessionsDir;
@@ -65,31 +71,31 @@ class SessionManager {
 
   async getNextSessionNumber(userId) {
     const files = await fs.readdir(this.sessionsDir);
-    const userSessions = files.filter(f => f.startsWith(`session-${userId}-`) && f.endsWith('.json'));
+    const pattern = sessionFilePattern(userId);
+    const numbers = [];
+    for (const file of files) {
+      const match = file.match(pattern);
+      if (match) numbers.push(parseInt(match[1], 10));
+    }
 
-    if (userSessions.length === 0) return 1;
-
-    const numbers = userSessions.map(f => {
-      const match = f.match(new RegExp(`session-${userId}-(\\d+)\\.json`));
-      return match ? parseInt(match[1]) : 0;
-    });
-
+    if (numbers.length === 0) return 1;
     return Math.max(...numbers) + 1;
   }
 
   async getUserSessions(userId) {
     const files = await fs.readdir(this.sessionsDir);
-    const userSessions = files.filter(f => f.startsWith(`session-${userId}-`) && f.endsWith('.json'));
+    const pattern = sessionFilePattern(userId);
 
     const sessions = [];
-    for (const file of userSessions) {
+    for (const file of files) {
+      const match = file.match(pattern);
+      if (!match) continue;
       try {
         const data = await fs.readFile(path.join(this.sessionsDir, file), 'utf8');
         const session = JSON.parse(data);
-        const match = file.match(new RegExp(`session-${userId}-(\\d+)\\.json`));
         sessions.push({
           file: file,
-          sessionNumber: match ? parseInt(match[1]) : 0,
+          sessionNumber: parseInt(match[1], 10),
           storyId: session.session.story_id,
           startedAt: session.session.started_at,
           status: session.session.status,
@@ -162,9 +168,24 @@ class SessionManager {
     return { session, sessionNumber };
   }
 
+  /**
+   * Writes the session to a temporary file in the same folder and then renames
+   * it over the previous save, so a crash cannot leave truncated JSON behind.
+   * The temporary name does not end in .json.
+   */
   async saveSession(userId, sessionNumber, session) {
     const sessionFile = path.join(this.sessionsDir, `session-${userId}-${sessionNumber}.json`);
-    await fs.writeFile(sessionFile, JSON.stringify(session, null, 2), 'utf8');
+    const temp = path.join(
+      this.sessionsDir,
+      `session-${userId}-${sessionNumber}.json.tmp-${process.pid}-${crypto.randomUUID()}`
+    );
+    try {
+      await fs.writeFile(temp, JSON.stringify(session, null, 2), 'utf8');
+      await fs.rename(temp, sessionFile);
+    } catch (e) {
+      await fs.rm(temp, { force: true });
+      throw e;
+    }
   }
 
   async deleteSession(userId, sessionNumber) {
