@@ -66,7 +66,59 @@ npm start
 
 The bot reads two secrets from AWS SSM Parameter Store: `narrator-bot` (Discord token) and `kimi-credentials` (LLM API key).
 
+When `DISCORD_TOKEN` is set it is used as the Discord token, and when `LLM_API_KEY` is set it is used as the LLM key. SSM is only asked for a secret that is not already in the environment. If both of those are set and `TYPESAFE_API_KEY` is set too, the bot does not create an SSM client.
+
 Junk filtering also uses a TypeSafe API key for Jev. The bot reads `TYPESAFE_API_KEY` from the environment when it is set, and otherwise loads the SSM parameter named by `TYPESAFE_CREDENTIALS_SECRET`, or `typesafe-api-key` when that is unset. If the key is missing, the bot still starts and player messages are allowed through to the narrator. Add the key to SSM separately. Do not commit it.
+
+## Hosting on Fly.io (testing)
+
+Fly.io hosts the bot for testing only. Run one machine and stop it when nobody is testing. The machine makes outbound connections only. It does not serve HTTP. No secrets belong in the repo or in `fly.toml`.
+
+**Warning:** only one running copy may use the Discord token. Stop the EC2 bot before you start this machine. If both are online, Discord disconnects one of them.
+
+### One-off setup
+
+`fly.toml` in this repo is the app config. If `fly launch` offers to overwrite it, keep the copy from this repo. Create the app without deploying, then create the volume and set the secrets. Replace the `...` placeholders with the real values in your shell. Do not commit them.
+
+```bash
+fly launch --no-deploy
+# or: fly apps create narra-bot
+
+fly volumes create narra_sessions --region lhr --size 1
+
+fly secrets set DISCORD_TOKEN=... LLM_API_KEY=... TYPESAFE_API_KEY=...
+```
+
+The volume is mounted at `/data`. `SESSIONS_DIR` is `/data/sessions`, and the bot creates that directory when it starts.
+
+The image does not include the `sessions` folder. A new volume therefore has no `session-template.json`. Copy that file onto the volume before anyone starts a new game, because new games are created from it.
+
+### Deploy
+
+```bash
+fly deploy
+```
+
+### Stop and start
+
+Stop the machine when you are not testing:
+
+```bash
+fly machine stop
+fly machine start
+```
+
+Or scale the app down to no machines:
+
+```bash
+fly scale count 0
+```
+
+After `fly scale count 0`, start a machine again with `fly scale count 1` or `fly machine start`.
+
+### Cost
+
+These costs are approximate. The machine is about $0.0058 an hour while it is running, and the 1GB volume is about $0.15 a month even when the machine is stopped.
 
 ## Testing
 

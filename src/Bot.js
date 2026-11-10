@@ -85,11 +85,34 @@ class Bot {
 
   async init() {
     try {
-      console.log('Loading secrets from SSM...');
-      this.discordToken = await this.secretsManager.getSecret('narrator-bot');
-      const llmApiKey = await this.secretsManager.getSecret(this.llmCredentialsSecret);
-      this.narrationService.apiKey = llmApiKey;
+      // Environment first, SSM when that value is unset. The client is created
+      // only inside the lookup, so AWS is not contacted when the environment
+      // already holds the secrets. Values are never logged.
+      const discordFromEnv = process.env.DISCORD_TOKEN;
+      const llmFromEnv = process.env.LLM_API_KEY;
+
+      if (discordFromEnv && llmFromEnv) {
+        console.log('Using Discord token and LLM API key from the environment');
+      } else if (discordFromEnv || llmFromEnv) {
+        console.log('Loading secrets from the environment and SSM...');
+      } else {
+        console.log('Loading secrets from SSM...');
+      }
+
+      if (discordFromEnv) {
+        this.discordToken = discordFromEnv;
+      } else {
+        this.discordToken = await this.secretsManager.getSecret('narrator-bot');
+      }
+
+      if (llmFromEnv) {
+        this.narrationService.apiKey = llmFromEnv;
+      } else {
+        this.narrationService.apiKey = await this.secretsManager.getSecret(this.llmCredentialsSecret);
+      }
+
       // Optional. A missing TypeSafe key must not stop startup.
+      // loadTypesafeApiKey uses TYPESAFE_API_KEY and does not call SSM when it is set.
       this.typesafeApiKey = await loadTypesafeApiKey(this.secretsManager);
 
       console.log('Loading story data...');

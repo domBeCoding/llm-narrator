@@ -76,18 +76,19 @@ test('an empty SSM value is treated as missing', async (t) => {
   assert.strictEqual(key, null);
 });
 
-// bot.init() reads process.env. Hide any host TypeSafe settings for these two
-// tests and put them back afterwards. The saved values are never logged.
+// bot.init() reads process.env. Hide any host TypeSafe, Discord, and LLM
+// settings for these two tests and put them back afterwards. The saved
+// values are never logged.
 function withoutHostTypesafeEnv(t) {
-  const savedKey = process.env.TYPESAFE_API_KEY;
-  const savedName = process.env.TYPESAFE_CREDENTIALS_SECRET;
-  delete process.env.TYPESAFE_API_KEY;
-  delete process.env.TYPESAFE_CREDENTIALS_SECRET;
+  const keys = ['TYPESAFE_API_KEY', 'TYPESAFE_CREDENTIALS_SECRET', 'DISCORD_TOKEN', 'LLM_API_KEY'];
+  const saved = {};
+  for (const key of keys) saved[key] = process.env[key];
+  for (const key of keys) delete process.env[key];
   t.after(() => {
-    if (savedKey === undefined) delete process.env.TYPESAFE_API_KEY;
-    else process.env.TYPESAFE_API_KEY = savedKey;
-    if (savedName === undefined) delete process.env.TYPESAFE_CREDENTIALS_SECRET;
-    else process.env.TYPESAFE_CREDENTIALS_SECRET = savedName;
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
   });
 }
 

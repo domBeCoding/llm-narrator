@@ -1,0 +1,6 @@
+# Runtime image only. stories/ and prompts/ are not listed here, so they are copied.
+node_modules
+sessions
+.git
+.env*
+test
