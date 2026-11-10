@@ -13,6 +13,9 @@ function readableEnding(endingVariant) {
   }).join(', ');
 }
 
+// In-character reply when a turn fails, including a narration call that still fails after its one retry.
+const NARRATION_FAILURE_REPLY = 'The Narrator\'s lantern gutters for a moment. \'Forgive me, the page blurred. Could you tell me that again?\'';
+
 // Kept as they are. Junk, whether caught locally or by Jev, uses one of these.
 const CLARIFICATIONS = [
   'The Narrator pauses, quill hovering over the page. \'Sorry, I didn\'t quite catch that. What did you want to do?\'',
@@ -415,7 +418,7 @@ class Bot {
 
       } catch (error) {
         console.error('Error handling message:', error);
-        await message.reply('Sorry, something went wrong. Please try again.');
+        await message.reply(NARRATION_FAILURE_REPLY);
       }
     });
 

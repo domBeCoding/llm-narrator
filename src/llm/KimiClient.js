@@ -15,14 +15,58 @@ const REQUEST_TIMEOUT_MS = 60000;
 // Stop after this many tool rounds so a stuck model cannot loop forever.
 // A round is one tool_use reply, the tool running, and one continuation request.
 const MAX_TOOL_ROUNDS = 3;
+// One extra attempt for a timeout, a dropped connection, HTTP 429 or HTTP 5xx.
+// The wait is not a tool round, and it never counts towards MAX_TOOL_ROUNDS.
+const DEFAULT_RETRY_DELAY_MS = 1000;
+const MAX_RETRY_AFTER_MS = 5000;
+
+function defaultSleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function isTimeoutError(error) {
+  return error.name === 'TimeoutError' || error.name === 'AbortError';
+}
+
+// Retry-After is a delay in seconds. Anything that is not a whole number of
+// seconds (including a date) keeps the default wait. The wait is capped at 5s.
+function retryAfterDelayMs(response, fallbackMs) {
+  const headers = response && response.headers;
+  if (!headers || typeof headers.get !== 'function') return fallbackMs;
+  const raw = headers.get('retry-after');
+  if (raw == null) return fallbackMs;
+  const text = String(raw).trim();
+  if (!/^\d+$/.test(text)) return fallbackMs;
+  return Math.min(Number(text) * 1000, MAX_RETRY_AFTER_MS);
+}
 
 class KimiClient {
   constructor(apiKey, options = {}) {
     this.apiKey = apiKey;
     this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+    this.retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+    this.sleep = options.sleep ?? defaultSleep;
   }
 
   async _request(messages, system, { label }) {
+    const first = await this._send(messages, system);
+    if (first.success) return first.data;
+    if (!this._isRetryable(first)) throw this._failureError(first, label);
+
+    const reason = first.error
+      ? (isTimeoutError(first.error) ? 'timeout' : 'network error')
+      : `HTTP ${first.status}`;
+    console.warn(`[WARN] Retrying Kimi ${label} request once (${reason})`);
+    await this.sleep(first.response ? retryAfterDelayMs(first.response, this.retryDelayMs) : this.retryDelayMs);
+
+    const second = await this._send(messages, system);
+    if (second.success) return second.data;
+    throw this._failureError(second, label);
+  }
+
+  async _send(messages, system) {
     let response;
     try {
       response = await fetch(KIMI_ENDPOINT, {
@@ -43,18 +87,31 @@ class KimiClient {
         signal: AbortSignal.timeout(this.timeoutMs)
       });
     } catch (error) {
-      if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-        throw new Error(`Kimi API timeout after ${this.timeoutMs}ms (${label})`);
-      }
-      throw error;
+      return { success: false, error };
     }
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Kimi API error${label === 'initial' ? '' : ' on tool continuation'}: ${response.status} - ${error}`);
+      const errorText = await response.text();
+      return { success: false, response, status: response.status, errorText };
     }
 
-    return response.json();
+    return { success: true, data: await response.json() };
+  }
+
+  _isRetryable(result) {
+    if (result.error) return true;
+    return result.status === 429 || (result.status >= 500 && result.status <= 599);
+  }
+
+  _failureError(result, label) {
+    if (result.error) {
+      if (isTimeoutError(result.error)) {
+        return new Error(`Kimi API timeout after ${this.timeoutMs}ms (${label})`);
+      }
+      return result.error;
+    }
+    const where = label === 'initial' ? '' : ' on tool continuation';
+    return new Error(`Kimi API error${where}: ${result.status} - ${result.errorText}`);
   }
 
   async call(prompt, session) {
