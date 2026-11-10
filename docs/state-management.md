@@ -225,7 +225,7 @@ session:
   started_at: "2026-07-25T12:00:00Z"
   last_action_at: "2026-07-25T12:15:00Z"
   last_llm_output: null # full verbatim narration from the last story turn; clarification, healthcheck and resume replies (no state block) leave it alone
-  ending_variant: null # null | halden_reconciled | tomas_helped | solo_path | corwin_involved | halden_turned_away
+  ending_variant: null # null, or an array of variant ids in config order, e.g. ["halden_reconciled", "tomas_helped"]
 
 conversation_history: [] # array of {role, content} pairs — reader actions and LLM narrations
 ```
@@ -290,11 +290,11 @@ The session `status` field transitions through three states, managed entirely by
 **How the transition works:**
 
 1. After every turn, the bot calls `evaluateEndConditions(session, config)` which checks all `end_conditions.all_required` predicates against the current state.
-2. If all pass and the session is `active`, the bot sets `status = 'concluding'`.
-3. On the next turn, the bot sees `status === 'concluding'` and injects a **FINAL TURN — ENDING DIRECTIVE** into the LLM prompt. The directive tells the LLM to infer the appropriate ending from the current game state flags and the `ending_variants` descriptions in the story config.
-4. After the concluding story turn, the bot sets `status = 'completed'`. Further messages are rejected. A healthcheck, clarification or resume reply on the final turn has no state block, so the story stays `concluding` and the reader's next real action gets the ending. The directive tells the AI to answer those messages as usual and keep the ending for a story action.
+2. If all pass and the session is `active`, the bot sets `status = 'concluding'` and records `ending_variant`. Every ending variant whose conditions all match the current flags is saved, in config order. Mixed routes are kept together (for example both `halden_reconciled` and `tomas_helped`). If none match, `ending_variant` stays null, a warning is logged, and the story still moves to `concluding`.
+3. On the next turn, the bot sees `status === 'concluding'` and injects a **FINAL TURN — ENDING DIRECTIVE** into the LLM prompt. The directive names the recorded variant id or ids and their descriptions, and tells the LLM to weave those into the closing scene. The LLM does not choose the ending. `/status` shows a short label for each recorded id while `ending_variant` is set, including after the session is completed.
+4. After the concluding story turn, the bot sets `status = 'completed'` and keeps the recorded `ending_variant`. Further messages are rejected. A healthcheck, clarification or resume reply on the final turn has no state block, so the story stays `concluding`, the ending is unchanged, and the reader's next real action gets the ending. The directive tells the AI to answer those messages as usual and keep the ending for a story action.
 
-The LLM never sets `status` — that is a deterministic application-level decision. The LLM infers which ending variant fits based on the flags and character state visible in the prompt.
+The LLM never sets `status` or `ending_variant`. Both are application decisions. A state block that includes them is rejected. `ending_variant` is an array of ids, or null when none is set.
 
 ### Target Turn Cycle (with validation)
 

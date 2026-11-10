@@ -74,6 +74,7 @@ async function setUp(t) {
   session.session.status = 'concluding';
   session.session.turn_count = 5;
   session.session.last_llm_output = LAST_SCENE;
+  session.session.ending_variant = ['halden_reconciled', 'tomas_helped'];
   await sessionManager.saveSession(USER_ID, 1, session);
   await sessionManager.setActiveSession(USER_ID, 1);
 
@@ -89,10 +90,16 @@ test('resuming on the final turn gives back the last scene, and the next action 
   const healthcheck = fakeMessage('you there?');
   await bot.handleMessage(healthcheck);
   assert.deepStrictEqual(healthcheck.replies, [HEALTHCHECK_REPLY]);
-  assert.match(bodies[0].messages.at(-1).content, /FINAL TURN/);
-  assert.match(bodies[0].messages.at(-1).content, /healthcheck or needs clarification/);
+  const directive = bodies[0].messages.at(-1).content.slice(bodies[0].messages.at(-1).content.indexOf('FINAL TURN'));
+  assert.match(directive, /healthcheck or needs clarification/);
+  assert.match(directive, /`halden_reconciled`/);
+  assert.match(directive, /Halden visits regularly now/);
+  assert.match(directive, /`tomas_helped`/);
+  assert.match(directive, /Tomas and the reader share a quiet moment/);
+  assert.doesNotMatch(directive, /Infer the appropriate ending/);
   let saved = await readSaved();
   assert.strictEqual(saved.session.status, 'concluding');
+  assert.deepStrictEqual(saved.session.ending_variant, ['halden_reconciled', 'tomas_helped']);
   assert.strictEqual(saved.session.last_llm_output, LAST_SCENE);
   assert.strictEqual(saved.session.turn_count, 5);
 
@@ -109,16 +116,23 @@ test('resuming on the final turn gives back the last scene, and the next action 
   assert.deepStrictEqual(resume.replies, [LAST_SCENE]);
   saved = await readSaved();
   assert.strictEqual(saved.session.status, 'concluding');
+  assert.deepStrictEqual(saved.session.ending_variant, ['halden_reconciled', 'tomas_helped']);
 
   // The next real action gets the ending, with a state block, and completes it.
   t.mock.restoreAll();
   t.mock.method(console, 'log', () => {});
-  stubFetch(t, [withBlock(ENDING, { story: { current_scene: 'Epilogue' }, choice_history: { action: 'sat with Elara', consequence: 'the story ended' } })]);
+  stubFetch(t, [withBlock(ENDING, {
+    session: { status: 'active', ending_variant: ['solo_path'] },
+    story: { current_scene: 'Epilogue' },
+    choice_history: { action: 'sat with Elara', consequence: 'the story ended' },
+  })]);
   const action = fakeMessage('I sit with Elara');
   await bot.handleMessage(action);
   assert.deepStrictEqual(action.replies, [ENDING]);
   saved = await readSaved();
   assert.strictEqual(saved.session.status, 'completed');
+  assert.deepStrictEqual(saved.session.ending_variant, ['halden_reconciled', 'tomas_helped']);
   assert.strictEqual(saved.session.last_llm_output, ENDING);
   assert.strictEqual(saved.session.turn_count, 6);
+  assert.strictEqual(saved.story.current_scene, 'Epilogue');
 });

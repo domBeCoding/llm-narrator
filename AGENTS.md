@@ -58,7 +58,7 @@ The story ends here.
 The End
 ```
 
-Set `session.status` to `"completed"` and `session.ending_variant` to the matching variant id(s).
+Do not set `session.status` or `session.ending_variant`. The application records `ending_variant` as an array of matching variant ids, or leaves it null, when the story first moves to concluding, and sets `status` to `"completed"` after the concluding story turn.
 
 ## Tool Scope
 
