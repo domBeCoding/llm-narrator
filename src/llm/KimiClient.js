@@ -12,6 +12,9 @@ const TOOLS = [
 
 const KIMI_ENDPOINT = 'https://api.kimi.com/coding/v1/messages';
 const REQUEST_TIMEOUT_MS = 60000;
+// Stop after this many tool rounds so a stuck model cannot loop forever.
+// A round is one tool_use reply, the tool running, and one continuation request.
+const MAX_TOOL_ROUNDS = 3;
 
 class KimiClient {
   constructor(apiKey, options = {}) {
@@ -65,7 +68,17 @@ class KimiClient {
     let data = await this._request(messages, systemContext, { label: 'initial' });
     console.log('[DEBUG] Kimi response received, stop_reason:', data.stop_reason);
 
+    let toolRounds = 0;
     while (data.stop_reason === 'tool_use') {
+      if (toolRounds >= MAX_TOOL_ROUNDS) {
+        console.warn(`[WARN] Tool use loop hit the ${MAX_TOOL_ROUNDS}-round cap`);
+        const saved = session.session.last_llm_output;
+        if (saved) {
+          return saved;
+        }
+        throw new Error(`Tool use loop hit the ${MAX_TOOL_ROUNDS}-round cap and there is no saved scene`);
+      }
+
       const toolUseBlock = data.content.find(block => block.type === 'tool_use');
 
       if (!toolUseBlock) {
@@ -99,6 +112,7 @@ class KimiClient {
         ]
       });
 
+      toolRounds += 1;
       data = await this._request(messages, systemContext, { label: 'tool continuation' });
       console.log('[DEBUG] Kimi continuation response, stop_reason:', data.stop_reason);
     }

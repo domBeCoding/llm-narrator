@@ -17,6 +17,15 @@ function makePrompt(action = 'PROMPT') {
   return { systemContext: 'SYSTEM_CONTEXT', userMessage: action };
 }
 
+function toolUseResponse(id) {
+  return {
+    json: {
+      stop_reason: 'tool_use',
+      content: [{ type: 'tool_use', id, name: 'get_last_narration', input: {} }],
+    },
+  };
+}
+
 /**
  * Replaces global.fetch with a stub that returns the queued responses in order.
  * Returns the list of captured request bodies.
@@ -233,30 +242,63 @@ test('callLLM: handles missing conversation_history gracefully', async (t) => {
   assert.strictEqual(bodies[0].messages[0].content, 'PROMPT');
 });
 
-// --- Known defects -----------------------------------------------------------
+// --- Tool-round cap ----------------------------------------------------------
+// stubFetch throws once its queued responses run out, so these tests fail
+// against an uncapped loop instead of hanging.
 
-test('BUG: the tool_use loop has no iteration cap', { skip: 'would loop forever against the current implementation' }, async (t) => {
-  // A model that keeps asking for the same tool will loop forever, holding the
-  // Discord interaction open and burning tokens. There should be a max-rounds
-  // guard (e.g. 5) after which the service gives up.
-  const original = global.fetch;
-  let calls = 0;
-  global.fetch = async () => {
-    calls++;
-    return {
-      ok: true,
-      status: 200,
-      json: async () => ({
-        stop_reason: 'tool_use',
-        content: [{ type: 'tool_use', id: `t${calls}`, name: 'get_last_narration', input: {} }],
-      }),
-      text: async () => '',
-    };
-  };
-  t.after(() => { global.fetch = original; });
+test('callLLM: after three tool rounds, a further tool_use returns the saved last scene', async (t) => {
+  const bodies = stubFetch(t, [
+    toolUseResponse('t1'),
+    toolUseResponse('t2'),
+    toolUseResponse('t3'),
+    toolUseResponse('t4'),
+  ]);
+  const warn = t.mock.method(console, 'warn', () => {});
 
   const svc = new NarrationService(storyManagerStub, 'test-key');
-  await assert.rejects(() => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput('x')), /too many tool/i);
+  const result = await svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput('THE SAVED SCENE'));
+
+  assert.strictEqual(result, 'THE SAVED SCENE');
+  // Initial request plus three continuations. The fourth response is still
+  // tool_use, and no fourth continuation is sent.
+  assert.strictEqual(bodies.length, 4);
+  assert.strictEqual(bodies[3].messages.at(-1).content[0].type, 'tool_result');
+  assert.strictEqual(warn.mock.calls.length, 1);
+  assert.match(String(warn.mock.calls[0].arguments[0]), /3-round cap/);
+});
+
+test('callLLM: three tool rounds followed by a text reply still works', async (t) => {
+  const bodies = stubFetch(t, [
+    toolUseResponse('t1'),
+    toolUseResponse('t2'),
+    toolUseResponse('t3'),
+    { json: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'The scene continues.' }] } },
+  ]);
+
+  const svc = new NarrationService(storyManagerStub, 'test-key');
+  const result = await svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput('THE SAVED SCENE'));
+
+  assert.strictEqual(result, 'The scene continues.');
+  assert.strictEqual(bodies.length, 4);
+});
+
+test('callLLM: the tool cap throws when there is no saved scene', async (t) => {
+  const bodies = stubFetch(t, [
+    toolUseResponse('t1'),
+    toolUseResponse('t2'),
+    toolUseResponse('t3'),
+    toolUseResponse('t4'),
+  ]);
+  const warn = t.mock.method(console, 'warn', () => {});
+
+  const svc = new NarrationService(storyManagerStub, 'test-key');
+
+  await assert.rejects(
+    () => svc.callLLM(makePrompt('PROMPT'), sessionWithLastOutput(null)),
+    /3-round cap and there is no saved scene/
+  );
+  assert.strictEqual(bodies.length, 4);
+  assert.strictEqual(warn.mock.calls.length, 1);
 });
 
 // --- Timeout behaviour -------------------------------------------------------
