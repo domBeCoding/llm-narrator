@@ -3,6 +3,7 @@ node_modules/
 sessions/session-*.json
 !sessions/session-template.json
 sessions/active-*.json
+sessions/*.tmp-*
 bot.log
 index.js.bak
 openclaw-workspace-state.json

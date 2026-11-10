@@ -232,6 +232,86 @@ test('saveSession: writes human-readable indented JSON', async (t) => {
   assert.match(raw, /\n {2}"session": \{/);
 });
 
+test('saveSession: writes valid JSON that getSessionByNumber can read', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  const session = JSON.parse(JSON.stringify(TEMPLATE));
+  session.session.session_id = 'session-42-1';
+  session.session.user_id = '42';
+  session.session.turn_count = 4;
+  session.session.last_llm_output = 'The kettle ticks.';
+
+  await manager.saveSession('42', 1, session);
+
+  const raw = await fs.readFile(path.join(dir, 'session-42-1.json'), 'utf8');
+  const parsed = JSON.parse(raw);
+  assert.deepStrictEqual(parsed, session);
+  assert.deepStrictEqual(await manager.getSessionByNumber('42', 1), session);
+});
+
+test('saveSession: replaces an existing save instead of appending', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  const first = await writeSession(dir, '42', 1, { turn_count: 1, last_llm_output: 'first' });
+  const next = JSON.parse(JSON.stringify(first));
+  next.session.turn_count = 2;
+  next.session.last_llm_output = 'second';
+
+  await manager.saveSession('42', 1, next);
+
+  const target = path.join(dir, 'session-42-1.json');
+  const raw = await fs.readFile(target, 'utf8');
+  const expected = JSON.stringify(next, null, 2);
+  assert.strictEqual(raw, expected);
+  assert.strictEqual(Buffer.byteLength(raw), Buffer.byteLength(expected));
+  assert.deepStrictEqual(JSON.parse(raw), next);
+  assert.deepStrictEqual(await manager.getSessionByNumber('42', 1), next);
+});
+
+test('saveSession: keeps the previous file and leaves no temp when rename fails', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  const original = await writeSession(dir, '42', 1, { turn_count: 3, last_llm_output: 'kept' });
+  const target = path.join(dir, 'session-42-1.json');
+  const before = await fs.readFile(target);
+
+  const replacement = JSON.parse(JSON.stringify(original));
+  replacement.session.turn_count = 99;
+  replacement.session.last_llm_output = 'should not land';
+
+  // SessionManager calls require('fs').promises.rename, which is this object.
+  // Reject only this directory so other tests can still rename.
+  const renameError = new Error('rename failed');
+  const originalRename = fs.rename;
+  fs.rename = async (src, dest, ...args) => {
+    const resolved = path.resolve(String(src));
+    if (resolved === dir || resolved.startsWith(dir + path.sep)) {
+      throw renameError;
+    }
+    return originalRename(src, dest, ...args);
+  };
+
+  try {
+    await assert.rejects(manager.saveSession('42', 1, replacement), (err) => err === renameError);
+  } finally {
+    fs.rename = originalRename;
+  }
+
+  const after = await fs.readFile(target);
+  assert.deepStrictEqual(after, before);
+  const leftovers = (await fs.readdir(dir)).filter(name => name.includes('.tmp-'));
+  assert.deepStrictEqual(leftovers, []);
+});
+
+test('getUserSessions and getNextSessionNumber: ignore leftover temp files', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  await writeSession(dir, '42', 1, { turn_count: 2 });
+  await writeSession(dir, '42', 2, { turn_count: 5 });
+  await fs.writeFile(path.join(dir, 'session-42-1.json.tmp-123-abc'), '{ "truncated": ', 'utf8');
+  await fs.writeFile(path.join(dir, 'session-42-8.json.tmp-123-abc'), '{ "truncated": ', 'utf8');
+
+  const sessions = await manager.getUserSessions('42');
+  assert.deepStrictEqual(sessions.map(s => s.sessionNumber), [2, 1]);
+  assert.strictEqual(await manager.getNextSessionNumber('42'), 3);
+});
+
 test('deleteSession: removes the session file', async (t) => {
   const { manager } = await makeManager(t);
   await manager.createSession('42', 'dom', 'the-herbalists-choice');
