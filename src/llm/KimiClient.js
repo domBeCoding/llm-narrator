@@ -116,7 +116,11 @@ class KimiClient {
 
   async call(prompt, session) {
     const { systemContext, userMessage } = prompt;
-    const history = session.conversation_history || [];
+    // The prompt history is already compacted. Use the saved history only
+    // when the prompt did not include one.
+    const history = Array.isArray(prompt.history)
+      ? prompt.history
+      : (session.conversation_history || []);
     const messages = [
       ...history.map(entry => ({ role: entry.role, content: entry.content })),
       { role: 'user', content: userMessage }

@@ -11,6 +11,18 @@ const JSON_BLOCK = /```json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```/i;
 // stays cacheable; the AI, not the code, decides which case the message is.
 const TURN_INSTRUCTION = 'If the reader\'s action is a story action, reply in the format the system prompt sets out: the story, the divider, the summary prompt and the choices, then a JSON block with the state updates. If an ending directive appears above, follow its format for the story action instead. If the message is a healthcheck or needs clarification, follow the Error Handling rules in the system prompt: reply in character with no choices and no JSON block. If the reader asks to resume after a healthcheck, call `get_last_narration` and present the narration it returns exactly as it is, with no JSON block.';
 
+// A turn is a user message plus the following assistant message, counted from
+// the start of the saved history. Up to PROMPT_HISTORY_TURNS + PROMPT_HISTORY_STEP
+// turns (16) the prompt gets every message word for word. Above that, the cut
+// advances by PROMPT_HISTORY_STEP turns, so the cached prefix stays put until
+// the next step: drop the first
+// floor((turns - PROMPT_HISTORY_TURNS) / PROMPT_HISTORY_STEP) * PROMPT_HISTORY_STEP
+// turns. The saved conversation_history is never shortened.
+const PROMPT_HISTORY_TURNS = 8;
+const PROMPT_HISTORY_STEP = 8;
+const RECAP_LABEL = 'Recap of earlier turns, not a new reader action.';
+const RECAP_STATE_LINE = 'Current flags, plot beats and secrets are in the Current Session State below.';
+
 const PROVIDERS = {
   kimi: KimiClient,
 };
@@ -64,7 +76,42 @@ class NarrationService {
 
     const userMessage = `## Current Session State\n\n\`\`\`json\n${stateSummary}\n\`\`\`\n\n---\n\n## Reader's Action\n\n${userAction}${concludingDirective}\n\n---\n\n${TURN_INSTRUCTION}`;
 
-    return { systemContext, userMessage };
+    return { systemContext, userMessage, history: this.historyForPrompt(session) };
+  }
+
+  // Messages to send before the current reader action. Copies only: the saved
+  // history and its entries stay as they are. Histories of 16 turns or fewer
+  // are sent whole. Longer ones drop a step of whole turns and attach one
+  // recap. If the first kept message is from the user, the recap is written
+  // into that message so two user messages are not sent in a row. If it is
+  // from the assistant, the recap stays its own user message.
+  historyForPrompt(session) {
+    const history = session && Array.isArray(session.conversation_history)
+      ? session.conversation_history
+      : [];
+    const messages = history.map(messageForPrompt);
+    const turns = indexTurns(messages);
+    const cut = turnsToCut(turns.length);
+    if (cut === 0) return messages;
+
+    const dropped = new Set();
+    for (let t = 0; t < cut; t++) {
+      for (let i = turns[t].start; i < turns[t].end; i++) dropped.add(i);
+    }
+    const kept = [];
+    for (let i = 0; i < messages.length; i++) {
+      if (!dropped.has(i)) kept.push(messages[i]);
+    }
+
+    const recap = recapEarlierTurns(session, cut);
+    if (kept.length > 0 && kept[0].role === 'user') {
+      kept[0] = {
+        role: 'user',
+        content: `${recap}\n\n---\n\n${kept[0].content}`,
+      };
+      return kept;
+    }
+    return [{ role: 'user', content: recap }, ...kept];
   }
 
   // The session state as the AI sees it in the final user message. Earlier
@@ -273,4 +320,77 @@ class NarrationService {
   }
 }
 
+function messageForPrompt(entry) {
+  return { role: entry.role, content: entry.content };
+}
+
+// Whole turns only. A user message with no following assistant reply, or any
+// other unpaired message, is not a turn and is left where it is.
+function indexTurns(messages) {
+  const turns = [];
+  let i = 0;
+  while (i < messages.length) {
+    if (messages[i].role === 'user' && i + 1 < messages.length && messages[i + 1].role === 'assistant') {
+      turns.push({ start: i, end: i + 2 });
+      i += 2;
+    } else {
+      i += 1;
+    }
+  }
+  return turns;
+}
+
+function turnsToCut(turnCount) {
+  if (turnCount <= PROMPT_HISTORY_TURNS + PROMPT_HISTORY_STEP) return 0;
+  return Math.floor((turnCount - PROMPT_HISTORY_TURNS) / PROMPT_HISTORY_STEP) * PROMPT_HISTORY_STEP;
+}
+
+// Copy a state value into the recap. Only strings and numbers, so the recap
+// cannot invent a description of anything else.
+function asStateText(value) {
+  if (typeof value === 'string') return value === '' ? null : value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function choiceLine(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const turn = asStateText(entry.turn);
+  const action = asStateText(entry.action);
+  const consequence = asStateText(entry.consequence);
+  let event = null;
+  if (action !== null && consequence !== null) event = `${action} -> ${consequence}`;
+  else if (action !== null) event = action;
+  else if (consequence !== null) event = consequence;
+  if (turn !== null && event !== null) return `Turn ${turn}: ${event}`;
+  if (turn !== null) return `Turn ${turn}`;
+  return event;
+}
+
+// Choices for turns that are still in the prompt stay out of the recap, so a
+// new turn does not rewrite the cached prefix. Entries with no turn number
+// have nowhere else to go, so they stay in the recap.
+function choiceLines(session, cutTurns) {
+  const entries = session && Array.isArray(session.choice_history) ? session.choice_history : [];
+  const lines = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    if (typeof entry.turn === 'number' && entry.turn > cutTurns) continue;
+    const line = choiceLine(entry);
+    if (line !== null) lines.push(line);
+  }
+  return lines;
+}
+
+// Choice lines for the cut turns, then a pointer to the live session state.
+// Flags, plot beats and secrets already travel in that state every turn, so
+// repeating them here would change the cached prefix whenever they change.
+function recapEarlierTurns(session, cutTurns) {
+  const choices = choiceLines(session, cutTurns);
+  const body = choices.length ? `${choices.join('\n')}\n\n` : '';
+  return `${RECAP_LABEL}\n\n${body}${RECAP_STATE_LINE}`;
+}
+
 module.exports = NarrationService;
+module.exports.PROMPT_HISTORY_TURNS = PROMPT_HISTORY_TURNS;
+module.exports.PROMPT_HISTORY_STEP = PROMPT_HISTORY_STEP;
