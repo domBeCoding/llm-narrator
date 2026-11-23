@@ -1,5 +1,7 @@
-// Earlier turns must reach the AI once, as chat messages, and not a second
-// time inside the session state in the final user message.
+// Earlier turns reach the AI as chat messages, and not a second time inside
+// the session state in the final user message. Once the saved history is
+// longer than the prompt window, older messages become one recap and the
+// recent turns stay word for word. The saved history is never shortened.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs').promises;
@@ -7,6 +9,7 @@ const os = require('os');
 const path = require('path');
 
 const NarrationService = require('../src/NarrationService');
+const { PROMPT_HISTORY_TURNS } = NarrationService;
 const StoryManager = require('../src/StoryManager');
 const SessionManager = require('../src/SessionManager');
 
@@ -84,6 +87,50 @@ function stateBlock(userMessage) {
 
 function countIn(text, needle) {
   return text.split(needle).length - 1;
+}
+
+const RECAP_LABEL = 'Recap of earlier turns, not a new reader action.';
+
+function messagesFor(count) {
+  return Array.from({ length: count }, (_, index) => ({
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: `HISTORY MESSAGE ${index} UNIQUE`,
+  }));
+}
+
+// After the fixed label, every remaining word has to be a value or a key
+// copied from the structured state the recap is allowed to use.
+function assertRecapCopiesStateOnly(recap, session) {
+  assert.ok(recap.startsWith(RECAP_LABEL), recap);
+  let rest = recap.slice(RECAP_LABEL.length);
+  const allowed = [
+    'choice_history', 'turn', 'action', 'consequence',
+    'flags', 'plot_beats_hit', 'revealed_secrets',
+  ];
+  for (const entry of session.choice_history || []) {
+    for (const key of ['turn', 'action', 'consequence']) {
+      const value = entry[key];
+      if (typeof value === 'string' && value !== '') allowed.push(value);
+      if (typeof value === 'number') allowed.push(String(value));
+    }
+  }
+  const flags = (session.story && session.story.flags) || {};
+  for (const [name, value] of Object.entries(flags)) {
+    if (value === true) allowed.push(name);
+  }
+  for (const beat of (session.story && session.story.plot_beats_hit) || []) {
+    if (typeof beat === 'string' && beat !== '') allowed.push(beat);
+  }
+  for (const [name, character] of Object.entries(session.characters || {})) {
+    const secrets = character && character.revealed_secrets;
+    if (!Array.isArray(secrets) || secrets.length === 0) continue;
+    const texts = secrets.filter(secret => typeof secret === 'string' && secret !== '');
+    if (texts.length === 0) continue;
+    allowed.push(name, ...texts);
+  }
+  const unique = [...new Set(allowed)].sort((a, b) => b.length - a.length);
+  for (const piece of unique) rest = rest.split(piece).join('');
+  assert.match(rest, /^\s*$/, `recap added text that is not in the session state: ${JSON.stringify(rest)}`);
 }
 
 test('the session state in the final user message leaves out conversation_history and last_llm_output', async (t) => {
@@ -254,4 +301,159 @@ test('a healthcheck does not count as a turn, and the next story turn counts as 
   await playTurn(t, svc, session, 3);
   assert.strictEqual(session.session.turn_count, 3);
   assert.deepStrictEqual(session.choice_history.map(entry => entry.turn), [1, 2, 3]);
+});
+
+// --- Compacting older turns --------------------------------------------------
+
+test('historyForPrompt keeps the last 8 turns and recaps only when older messages remain', () => {
+  assert.strictEqual(PROMPT_HISTORY_TURNS, 8);
+  const kept = PROMPT_HISTORY_TURNS * 2;
+  const svc = new NarrationService({}, 'key');
+
+  for (const count of [0, 1, 15, kept]) {
+    const session = { conversation_history: messagesFor(count), choice_history: [], story: { flags: {}, plot_beats_hit: [] }, characters: {} };
+    const before = structuredClone(session);
+    const history = svc.historyForPrompt(session);
+    assert.deepStrictEqual(session, before, `the save is untouched at ${count} messages`);
+    assert.deepStrictEqual(history, session.conversation_history);
+    assert.strictEqual(history.some(message => String(message.content).startsWith(RECAP_LABEL)), false);
+  }
+
+  const odd = messagesFor(kept + 1);
+  const session = {
+    conversation_history: odd,
+    choice_history: [],
+    story: { flags: { forest_entered: false }, plot_beats_hit: [] },
+    characters: { tomas: { revealed_secrets: [] } },
+  };
+  const before = structuredClone(session);
+  const history = svc.historyForPrompt(session);
+  assert.deepStrictEqual(session, before);
+  assert.strictEqual(history.length, kept + 1);
+  assert.deepStrictEqual(history[0], { role: 'user', content: RECAP_LABEL });
+  assert.deepStrictEqual(history.slice(1), odd.slice(-kept));
+  assert.strictEqual(history.some(message => message.content === odd[0].content), false);
+});
+
+test('a request with 8 turns or fewer includes the full history and no recap', async (t) => {
+  const svc = new NarrationService(await loadStories(t), 'key');
+  const session = await freshSession();
+  for (let turn = 1; turn <= PROMPT_HISTORY_TURNS; turn++) await playTurn(t, svc, session, turn);
+
+  const savedHistory = session.conversation_history.map(entry => ({ role: entry.role, content: entry.content }));
+  assert.strictEqual(savedHistory.length, PROMPT_HISTORY_TURNS * 2);
+
+  const body = await playTurn(t, svc, session, PROMPT_HISTORY_TURNS + 1);
+  const sentHistory = body.messages.slice(0, -1);
+  assert.deepStrictEqual(sentHistory, savedHistory);
+  assert.strictEqual(sentHistory.some(message => String(message.content).startsWith(RECAP_LABEL)), false);
+  for (let turn = 1; turn <= PROMPT_HISTORY_TURNS; turn++) {
+    assert.strictEqual(sentHistory[turn * 2 - 2].content, actionFor(turn));
+    assert.strictEqual(sentHistory[turn * 2 - 1].content, narrationFor(turn));
+  }
+});
+
+test('a request with 9 turns keeps turns 2 to 9, one recap before them, and the save keeps turn 1', async (t) => {
+  const svc = new NarrationService(await loadStories(t), 'key');
+  const session = await freshSession();
+  for (let turn = 1; turn <= 9; turn++) await playTurn(t, svc, session, turn);
+
+  assert.strictEqual(session.conversation_history.length, 18);
+  assert.deepStrictEqual(session.conversation_history[0], { role: 'user', content: actionFor(1) });
+  assert.deepStrictEqual(session.conversation_history[1], { role: 'assistant', content: narrationFor(1) });
+
+  session.story.flags.reader_checked_elara = true;
+  session.story.plot_beats_hit = ['elara_found_sick'];
+  session.characters.elara.revealed_secrets = ['the torn page names moonpetal'];
+
+  const saved = structuredClone(session);
+  const bodies = stubFetch(t, [textReply('The window holds.')]);
+  const prompt = svc.buildPrompt(session, 'I wait by the window');
+  await svc.callLLM(prompt, session);
+
+  assert.deepStrictEqual(session, saved, 'building and sending the prompt does not change the save');
+  assert.deepStrictEqual(
+    prompt.history.slice(1),
+    saved.conversation_history.slice(-PROMPT_HISTORY_TURNS * 2).map(entry => ({ role: entry.role, content: entry.content }))
+  );
+
+  const msgs = bodies[0].messages;
+  const recaps = msgs.filter(message => typeof message.content === 'string' && message.content.startsWith(RECAP_LABEL));
+  assert.strictEqual(recaps.length, 1);
+  assert.strictEqual(msgs[0], recaps[0]);
+  assert.strictEqual(msgs[0].role, 'user');
+  assert.deepStrictEqual(msgs.slice(0, -1), prompt.history);
+  assert.strictEqual(msgs.at(-1).content, prompt.userMessage);
+
+  for (let turn = 2; turn <= 9; turn++) {
+    assert.strictEqual(msgs[(turn - 2) * 2 + 1].content, actionFor(turn));
+    assert.strictEqual(msgs[(turn - 2) * 2 + 2].content, narrationFor(turn));
+  }
+
+  const everything = [bodies[0].system, ...msgs.map(message => message.content)].join('\n');
+  assert.strictEqual(countIn(everything, actionFor(1)), 0, 'turn 1 action');
+  assert.strictEqual(countIn(everything, narrationFor(1)), 0, 'turn 1 narration');
+  for (let turn = 2; turn <= 9; turn++) {
+    assert.strictEqual(countIn(everything, actionFor(turn)), 1, actionFor(turn));
+    assert.strictEqual(countIn(everything, narrationFor(turn)), 1, narrationFor(turn));
+  }
+
+  const recap = msgs[0].content;
+  assert.ok(recap.includes('looked closer on turn 1'));
+  assert.ok(recap.includes('reader_checked_elara'));
+  assert.ok(recap.includes('elara_found_sick'));
+  assert.ok(recap.includes('the torn page names moonpetal'));
+  assert.ok(recap.indexOf('choice_history') < recap.indexOf('\nflags\n'));
+  assert.ok(recap.indexOf('\nflags\n') < recap.indexOf('\nplot_beats_hit\n'));
+  assert.ok(recap.indexOf('\nplot_beats_hit\n') < recap.indexOf('\nrevealed_secrets\n'));
+  assert.strictEqual(recap.includes('forest_entered'), false);
+  assert.strictEqual(recap.includes('tomas'), false);
+  assertRecapCopiesStateOnly(recap, session);
+
+  const stateText = JSON.stringify(stateBlock(prompt.userMessage));
+  assert.strictEqual(countIn(stateText, actionFor(1)), 0);
+  assert.strictEqual(countIn(stateText, narrationFor(1)), 0);
+  assert.strictEqual(countIn(stateText, RECAP_LABEL), 0);
+  assert.strictEqual(stateText.includes('conversation_history'), false);
+});
+
+test('call uses prompt.history when it is an array and falls back only when it is missing', async (t) => {
+  const svc = new NarrationService(await loadStories(t), 'key');
+  const session = await freshSession();
+  session.conversation_history = [
+    { role: 'user', content: 'SAVED USER' },
+    { role: 'assistant', content: 'SAVED ASSISTANT' },
+  ];
+
+  const compact = stubFetch(t, [textReply('ok'), textReply('ok')]);
+  await svc.callLLM({
+    systemContext: 'sys',
+    userMessage: 'CURRENT',
+    history: [{ role: 'user', content: 'COMPACT USER' }],
+  }, session);
+  await svc.callLLM({
+    systemContext: 'sys',
+    userMessage: 'CURRENT',
+    history: [],
+  }, session);
+
+  assert.deepStrictEqual(compact[0].messages, [
+    { role: 'user', content: 'COMPACT USER' },
+    { role: 'user', content: 'CURRENT' },
+  ]);
+  assert.deepStrictEqual(compact[1].messages, [
+    { role: 'user', content: 'CURRENT' },
+  ]);
+  assert.deepStrictEqual(session.conversation_history, [
+    { role: 'user', content: 'SAVED USER' },
+    { role: 'assistant', content: 'SAVED ASSISTANT' },
+  ]);
+
+  const fallback = stubFetch(t, [textReply('ok')]);
+  await svc.callLLM({ systemContext: 'sys', userMessage: 'CURRENT' }, session);
+  assert.deepStrictEqual(fallback[0].messages, [
+    { role: 'user', content: 'SAVED USER' },
+    { role: 'assistant', content: 'SAVED ASSISTANT' },
+    { role: 'user', content: 'CURRENT' },
+  ]);
 });

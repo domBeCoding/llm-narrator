@@ -11,6 +11,13 @@ const JSON_BLOCK = /```json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```/i;
 // stays cacheable; the AI, not the code, decides which case the message is.
 const TURN_INSTRUCTION = 'If the reader\'s action is a story action, reply in the format the system prompt sets out: the story, the divider, the summary prompt and the choices, then a JSON block with the state updates. If an ending directive appears above, follow its format for the story action instead. If the message is a healthcheck or needs clarification, follow the Error Handling rules in the system prompt: reply in character with no choices and no JSON block. If the reader asks to resume after a healthcheck, call `get_last_narration` and present the narration it returns exactly as it is, with no JSON block.';
 
+// Recent turns stay word for word in the model prompt. Anything older is one
+// recap built from the session state. The saved conversation_history is never
+// shortened. A turn is one user message plus the following assistant message.
+const PROMPT_HISTORY_TURNS = 8;
+const PROMPT_HISTORY_MESSAGES = PROMPT_HISTORY_TURNS * 2;
+const RECAP_LABEL = 'Recap of earlier turns, not a new reader action.';
+
 const PROVIDERS = {
   kimi: KimiClient,
 };
@@ -64,7 +71,23 @@ class NarrationService {
 
     const userMessage = `## Current Session State\n\n\`\`\`json\n${stateSummary}\n\`\`\`\n\n---\n\n## Reader's Action\n\n${userAction}${concludingDirective}\n\n---\n\n${TURN_INSTRUCTION}`;
 
-    return { systemContext, userMessage };
+    return { systemContext, userMessage, history: this.historyForPrompt(session) };
+  }
+
+  // Messages to send before the current reader action. The last 8 turns stay
+  // word for word (the last 16 messages, even when the list length is odd).
+  // Shorter histories are sent unchanged. When older messages remain, one
+  // recap is placed in front of the recent messages. This list is not saved.
+  historyForPrompt(session) {
+    const history = session && Array.isArray(session.conversation_history)
+      ? session.conversation_history
+      : [];
+    const messages = history.map(messageForPrompt);
+    if (messages.length <= PROMPT_HISTORY_MESSAGES) return messages;
+    return [
+      { role: 'user', content: recapEarlierTurns(session) },
+      ...messages.slice(-PROMPT_HISTORY_MESSAGES),
+    ];
   }
 
   // The session state as the AI sees it in the final user message. Earlier
@@ -273,4 +296,89 @@ class NarrationService {
   }
 }
 
+function messageForPrompt(entry) {
+  return { role: entry.role, content: entry.content };
+}
+
+// Copy a state value into the recap. Only strings and numbers, so the recap
+// cannot invent a description of anything else.
+function asStateText(value) {
+  if (typeof value === 'string') return value === '' ? null : value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function choiceLines(session) {
+  const entries = session && Array.isArray(session.choice_history) ? session.choice_history : [];
+  const lines = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const fields = [
+      ['turn', asStateText(entry.turn)],
+      ['action', asStateText(entry.action)],
+      ['consequence', asStateText(entry.consequence)],
+    ];
+    for (const [label, text] of fields) {
+      if (text !== null) lines.push(label, text);
+    }
+  }
+  return lines;
+}
+
+function flagLines(session) {
+  const flags = session && session.story && session.story.flags;
+  if (!flags || typeof flags !== 'object' || Array.isArray(flags)) return [];
+  const names = [];
+  for (const [name, value] of Object.entries(flags)) {
+    if (value === true) names.push(name);
+  }
+  return names;
+}
+
+function beatLines(session) {
+  const beats = session && session.story && session.story.plot_beats_hit;
+  if (!Array.isArray(beats)) return [];
+  const lines = [];
+  for (const beat of beats) {
+    const text = asStateText(beat);
+    if (text !== null) lines.push(text);
+  }
+  return lines;
+}
+
+function secretLines(session) {
+  const characters = session && session.characters;
+  if (!characters || typeof characters !== 'object' || Array.isArray(characters)) return [];
+  const lines = [];
+  for (const [name, character] of Object.entries(characters)) {
+    const secrets = character && character.revealed_secrets;
+    if (!Array.isArray(secrets) || secrets.length === 0) continue;
+    const texts = [];
+    for (const secret of secrets) {
+      const text = asStateText(secret);
+      if (text !== null) texts.push(text);
+    }
+    if (texts.length === 0) continue;
+    lines.push(name, ...texts);
+  }
+  return lines;
+}
+
+// One user message. Sections follow the session, and empty ones are left out.
+// Nothing here is quoted from older narration or reader actions.
+function recapEarlierTurns(session) {
+  const sections = [];
+  const choices = choiceLines(session);
+  if (choices.length) sections.push(['choice_history', ...choices].join('\n'));
+  const flags = flagLines(session);
+  if (flags.length) sections.push(['flags', ...flags].join('\n'));
+  const beats = beatLines(session);
+  if (beats.length) sections.push(['plot_beats_hit', ...beats].join('\n'));
+  const secrets = secretLines(session);
+  if (secrets.length) sections.push(['revealed_secrets', ...secrets].join('\n'));
+  if (sections.length === 0) return RECAP_LABEL;
+  return `${RECAP_LABEL}\n\n${sections.join('\n\n')}`;
+}
+
 module.exports = NarrationService;
+module.exports.PROMPT_HISTORY_TURNS = PROMPT_HISTORY_TURNS;
