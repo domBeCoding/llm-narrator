@@ -245,3 +245,73 @@ test('the shipped session template declares every flag in the story config', asy
     assert.ok(character in template.characters, `template is missing character "${character}"`);
   }
 });
+
+async function loadHerbalist() {
+  const root = path.join(__dirname, '..');
+  const manager = new StoryManager(path.join(root, 'stories'), path.join(root, 'prompts'));
+  await manager.loadStoryData();
+  return manager;
+}
+
+test('getStoryContentForAct: act 1 includes the apothecary scene and excludes later acts and notes', async () => {
+  const manager = await loadHerbalist();
+  const text = manager.getStoryContentForAct('the-herbalists-choice', 1);
+
+  assert.match(text, /# The Herbalist's Choice/);
+  assert.match(text, /### Master Elara/);
+  assert.match(text, /She once entered the Greymere Forest/);
+  assert.match(text, /Scene 1: Morning in the Apothecary/);
+  assert.doesNotMatch(text, /Scene 2: The Crossroads/);
+  assert.doesNotMatch(text, /Scene 3: The Moonpetal/);
+  assert.doesNotMatch(text, /## State Tracking Reference/);
+  assert.doesNotMatch(text, /## Author Notes/);
+});
+
+test('getStoryContentForAct: act 2 includes the crossroads and the preamble, and excludes later material', async () => {
+  const manager = await loadHerbalist();
+  const text = manager.getStoryContentForAct('the-herbalists-choice', 2);
+
+  assert.match(text, /# The Herbalist's Choice/);
+  assert.match(text, /### Master Elara/);
+  assert.match(text, /Scene 2: The Crossroads/);
+  assert.doesNotMatch(text, /Scene 1: Morning in the Apothecary/);
+  assert.doesNotMatch(text, /Scene 3: The Moonpetal/);
+  assert.doesNotMatch(text, /## Author Notes/);
+  assert.doesNotMatch(text, /## State Tracking Reference/);
+});
+
+test('getStoryContentForAct: act 3 includes the moonpetal and the preamble, and excludes the notes', async () => {
+  const manager = await loadHerbalist();
+  const text = manager.getStoryContentForAct('the-herbalists-choice', 3);
+
+  assert.match(text, /# The Herbalist's Choice/);
+  assert.match(text, /### Halden/);
+  assert.match(text, /Scene 3: The Moonpetal/);
+  assert.doesNotMatch(text, /Scene 1: Morning in the Apothecary/);
+  assert.doesNotMatch(text, /Scene 2: The Crossroads/);
+  assert.doesNotMatch(text, /## Author Notes/);
+  assert.doesNotMatch(text, /## State Tracking Reference/);
+});
+
+test('getStoryContentForAct: a missing or unknown current_act returns the full file and logs a warning', async (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (...args) => {
+    warnings.push(args.map(part => String(part)).join(' '));
+  });
+  const manager = await loadHerbalist();
+  const full = manager.getStory('the-herbalists-choice').content;
+
+  warnings.length = 0;
+  const missing = manager.getStoryContentForAct('the-herbalists-choice', undefined);
+  assert.strictEqual(missing, full);
+  assert.match(missing, /Scene 3: The Moonpetal/);
+  assert.match(missing, /## Author Notes/);
+  assert.ok(warnings.some(line => /current_act=missing/.test(line) && /full story/.test(line)));
+
+  warnings.length = 0;
+  const unknown = manager.getStoryContentForAct('the-herbalists-choice', 9);
+  assert.strictEqual(unknown, full);
+  assert.match(unknown, /Scene 2: The Crossroads/);
+  assert.match(unknown, /## Author Notes/);
+  assert.ok(warnings.some(line => /current_act=9/.test(line) && /full story/.test(line)));
+});

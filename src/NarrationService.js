@@ -55,7 +55,12 @@ class NarrationService {
       concludingDirective = '\n\n---\n\n' + filled;
     }
 
-    const systemContext = `${NARRATOR_SYSTEM}\n\n${this.storyManager.getSystemPrompt()}\n\n---\n\n## Story Context\n\n${story.content}\n\n---\n\n## Story Config (Mechanical Rules)\n\n\`\`\`json\n${JSON.stringify(story.config, null, 2)}\n\`\`\``;
+    const actNumber = session.story && session.story.current_act;
+    const storyText = typeof this.storyManager.getStoryContentForAct === 'function'
+      ? this.storyManager.getStoryContentForAct(session.session.story_id, actNumber)
+      : story.content;
+
+    const systemContext = `${NARRATOR_SYSTEM}\n\n${this.storyManager.getSystemPrompt()}\n\n---\n\n## Story Context\n\n${storyText}\n\n---\n\n## Story Config (Mechanical Rules)\n\n\`\`\`json\n${JSON.stringify(story.config, null, 2)}\n\`\`\``;
 
     const userMessage = `## Current Session State\n\n\`\`\`json\n${stateSummary}\n\`\`\`\n\n---\n\n## Reader's Action\n\n${userAction}${concludingDirective}\n\n---\n\n${TURN_INSTRUCTION}`;
 
