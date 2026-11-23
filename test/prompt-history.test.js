@@ -90,6 +90,7 @@ function countIn(text, needle) {
 }
 
 const RECAP_LABEL = 'Recap of earlier turns, not a new reader action.';
+const RECAP_STATE_LINE = 'Current flags, plot beats and secrets are in the Current Session State below.';
 
 function messagesFor(count) {
   return Array.from({ length: count }, (_, index) => ({
@@ -98,35 +99,20 @@ function messagesFor(count) {
   }));
 }
 
-// After the fixed label, every remaining word has to be a value or a key
-// copied from the structured state the recap is allowed to use.
+// After the fixed label and the closing pointer, every remaining word has to
+// be a choice value. Flags, plot beats and secrets are not copied into the recap.
 function assertRecapCopiesStateOnly(recap, session) {
   assert.ok(recap.startsWith(RECAP_LABEL), recap);
-  let rest = recap.slice(RECAP_LABEL.length);
-  const allowed = [
-    'Turn', 'Flags now true', 'Plot beats reached', 'Secrets revealed',
-  ];
+  assert.ok(recap.endsWith(RECAP_STATE_LINE), recap);
+  let rest = recap.slice(RECAP_LABEL.length, recap.length - RECAP_STATE_LINE.length);
+  const allowed = ['Turn'];
   for (const entry of session.choice_history || []) {
+    if (typeof entry.turn === 'number' && entry.turn > 8) continue;
     for (const key of ['turn', 'action', 'consequence']) {
       const value = entry[key];
       if (typeof value === 'string' && value !== '') allowed.push(value);
       if (typeof value === 'number') allowed.push(String(value));
     }
-  }
-  const flags = (session.story && session.story.flags) || {};
-  for (const [name, value] of Object.entries(flags)) {
-    if (value === true) allowed.push(name);
-  }
-  for (const beat of (session.story && session.story.plot_beats_hit) || []) {
-    if (typeof beat === 'string' && beat !== '') allowed.push(beat);
-  }
-  for (const [name, character] of Object.entries(session.characters || {})) {
-    const secrets = character && character.revealed_secrets;
-    if (!Array.isArray(secrets) || secrets.length === 0) continue;
-    const texts = secrets.filter(secret => typeof secret === 'string' && secret !== '');
-    if (texts.length === 0) continue;
-    const label = name.charAt(0).toUpperCase() + name.slice(1);
-    allowed.push(name, label, ...texts);
   }
   const unique = [...new Set(allowed)].sort((a, b) => b.length - a.length);
   for (const piece of unique) rest = rest.split(piece).join('');
@@ -482,20 +468,16 @@ test('the recap is one line per item and copies only the cut state', () => {
     'Turn 4: opened the window',
     'asked Tomas -> he looked away',
     '',
-    'Flags now true: reader_checked_elara, tomas_involved',
-    '',
-    'Plot beats reached:',
-    '- elara_found_sick',
-    '- greymere_fever_identified',
-    '',
-    'Secrets revealed:',
-    'Elara: secret one; secret two',
-    'Halden: knows the garden',
+    'Current flags, plot beats and secrets are in the Current Session State below.',
   ].join('\n'));
+  assert.strictEqual(recap.includes('reader_checked_elara'), false);
   assert.strictEqual(recap.includes('forest_entered'), false);
+  assert.strictEqual(recap.includes('tomas_involved'), false);
+  assert.strictEqual(recap.includes('elara_found_sick'), false);
+  assert.strictEqual(recap.includes('greymere_fever_identified'), false);
+  assert.strictEqual(recap.includes('secret one'), false);
+  assert.strictEqual(recap.includes('knows the garden'), false);
   assert.strictEqual(recap.includes('this later choice must stay out of the recap'), false);
-  assert.strictEqual(recap.includes('\ntomas:'), false);
-  assert.strictEqual(recap.includes('Tomas:'), false);
   assertRecapCopiesStateOnly(recap, session);
 });
 
@@ -519,7 +501,13 @@ test('an unpaired assistant just after the cut keeps the recap as its own user m
   assert.deepStrictEqual(session, before);
   assert.deepStrictEqual(history[0], {
     role: 'user',
-    content: 'Recap of earlier turns, not a new reader action.\n\nTurn 2: checked the kettle -> the lid was warm',
+    content: [
+      'Recap of earlier turns, not a new reader action.',
+      '',
+      'Turn 2: checked the kettle -> the lid was warm',
+      '',
+      'Current flags, plot beats and secrets are in the Current Session State below.',
+    ].join('\n'),
   });
   assert.deepStrictEqual(history[1], { role: 'assistant', content: 'ORPHAN ASSISTANT BETWEEN CUT AND KEEP' });
   assert.strictEqual(history[2].content, actionFor(9));
@@ -545,6 +533,39 @@ test('prompt history for turns 17 to 23 keeps the same prefix as new turns are a
   assert.strictEqual(prompts[0][0].content.includes('looked closer on turn 8'), true);
   assert.strictEqual(prompts[0][0].content.includes('looked closer on turn 9'), false);
   assert.strictEqual(prompts[prompts.length - 1][0].content.includes('looked closer on turn 9'), false);
+});
+
+test('recap text and the prompt prefix stay identical for turns 17 to 23 when flags, beats and secrets change', () => {
+  const svc = new NarrationService({}, 'key');
+  const prompts = [];
+  const recaps = [];
+  for (let turnCount = 17; turnCount <= 23; turnCount++) {
+    const session = sessionForTurns(turnCount, {
+      story: {
+        flags: {
+          reader_checked_elara: turnCount % 2 === 0,
+          [`flag_added_on_turn_${turnCount}`]: true,
+        },
+        plot_beats_hit: [`beat from turn ${turnCount}`],
+      },
+      characters: {
+        elara: { revealed_secrets: [`secret from turn ${turnCount}`] },
+      },
+    });
+    const history = svc.historyForPrompt(session);
+    prompts.push(history);
+    recaps.push(recapPart(history[0].content));
+  }
+
+  for (let i = 1; i < prompts.length; i++) {
+    assert.strictEqual(recaps[i], recaps[0]);
+    assert.deepStrictEqual(prompts[i].slice(0, prompts[0].length), prompts[0]);
+  }
+  assert.ok(recaps[0].endsWith(RECAP_STATE_LINE));
+  assert.strictEqual(recaps[0].includes('flag_added_on_turn_'), false);
+  assert.strictEqual(recaps[0].includes('beat from turn'), false);
+  assert.strictEqual(recaps[0].includes('secret from turn'), false);
+  assert.strictEqual(recaps[0].includes('reader_checked_elara'), false);
 });
 
 test('24 turns move the cut to the first 16', () => {

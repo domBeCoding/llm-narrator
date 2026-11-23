@@ -21,6 +21,7 @@ const TURN_INSTRUCTION = 'If the reader\'s action is a story action, reply in th
 const PROMPT_HISTORY_TURNS = 8;
 const PROMPT_HISTORY_STEP = 8;
 const RECAP_LABEL = 'Recap of earlier turns, not a new reader action.';
+const RECAP_STATE_LINE = 'Current flags, plot beats and secrets are in the Current Session State below.';
 
 const PROVIDERS = {
   kimi: KimiClient,
@@ -381,60 +382,13 @@ function choiceLines(session, cutTurns) {
   return lines;
 }
 
-function flagLines(session) {
-  const flags = session && session.story && session.story.flags;
-  if (!flags || typeof flags !== 'object' || Array.isArray(flags)) return [];
-  const names = [];
-  for (const [name, value] of Object.entries(flags)) {
-    if (value === true) names.push(name);
-  }
-  return names;
-}
-
-function beatLines(session) {
-  const beats = session && session.story && session.story.plot_beats_hit;
-  if (!Array.isArray(beats)) return [];
-  const lines = [];
-  for (const beat of beats) {
-    const text = asStateText(beat);
-    if (text !== null) lines.push(text);
-  }
-  return lines;
-}
-
-function secretLines(session) {
-  const characters = session && session.characters;
-  if (!characters || typeof characters !== 'object' || Array.isArray(characters)) return [];
-  const lines = [];
-  for (const [name, character] of Object.entries(characters)) {
-    const secrets = character && character.revealed_secrets;
-    if (!Array.isArray(secrets) || secrets.length === 0) continue;
-    const texts = [];
-    for (const secret of secrets) {
-      const text = asStateText(secret);
-      if (text !== null) texts.push(text);
-    }
-    if (texts.length === 0) continue;
-    const label = name.charAt(0).toUpperCase() + name.slice(1);
-    lines.push(`${label}: ${texts.join('; ')}`);
-  }
-  return lines;
-}
-
-// One readable block. Empty sections are left out. The words of each item are
-// copied from the session; the labels only name the section.
+// Choice lines for the cut turns, then a pointer to the live session state.
+// Flags, plot beats and secrets already travel in that state every turn, so
+// repeating them here would change the cached prefix whenever they change.
 function recapEarlierTurns(session, cutTurns) {
-  const sections = [];
   const choices = choiceLines(session, cutTurns);
-  if (choices.length) sections.push(choices.join('\n'));
-  const flags = flagLines(session);
-  if (flags.length) sections.push(`Flags now true: ${flags.join(', ')}`);
-  const beats = beatLines(session);
-  if (beats.length) sections.push(['Plot beats reached:', ...beats.map(beat => `- ${beat}`)].join('\n'));
-  const secrets = secretLines(session);
-  if (secrets.length) sections.push(['Secrets revealed:', ...secrets].join('\n'));
-  if (sections.length === 0) return RECAP_LABEL;
-  return `${RECAP_LABEL}\n\n${sections.join('\n\n')}`;
+  const body = choices.length ? `${choices.join('\n')}\n\n` : '';
+  return `${RECAP_LABEL}\n\n${body}${RECAP_STATE_LINE}`;
 }
 
 module.exports = NarrationService;
