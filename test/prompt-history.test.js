@@ -1,7 +1,8 @@
 // Earlier turns reach the AI as chat messages, and not a second time inside
 // the session state in the final user message. Up to 16 turns the history is
 // sent word for word. Above that, a step of 8 turns is cut and replaced by
-// one recap. The saved history is never shortened.
+// one recap. The saved history is never shortened. The choice list in that
+// state keeps only the last 8 entries. The saved choice_history stays whole.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs').promises;
@@ -154,6 +155,81 @@ test('the session state in the final user message leaves out conversation_histor
   assert.strictEqual('last_llm_output' in state.session, false);
   assert.strictEqual(state.session.turn_count, 3);
   assert.strictEqual(state.reader.name, 'Wren');
+});
+
+test('stateForPrompt keeps only the last 8 choices when the history is longer, in order', () => {
+  const svc = new NarrationService({}, 'key');
+  const choice_history = choicesUpTo(12);
+  const session = {
+    session: { turn_count: 12, last_llm_output: 'PREVIOUS NARRATION', status: 'active' },
+    reader: { name: 'Wren', location: 'apothecary' },
+    story: { flags: { story_started: true }, plot_beats_hit: ['elara_found_sick'] },
+    choice_history,
+    conversation_history: pairedTurns(12),
+  };
+  const before = structuredClone(session);
+  const state = svc.stateForPrompt(session);
+
+  assert.deepStrictEqual(session, before);
+  assert.strictEqual(session.choice_history.length, 12);
+  assert.deepStrictEqual(state.choice_history, choice_history.slice(-PROMPT_HISTORY_TURNS));
+  assert.deepStrictEqual(
+    state.choice_history.map(entry => entry.turn),
+    [5, 6, 7, 8, 9, 10, 11, 12]
+  );
+  assert.strictEqual(state.reader.location, 'apothecary');
+  assert.deepStrictEqual(state.story, before.story);
+  assert.strictEqual(state.session.turn_count, 12);
+  assert.strictEqual(state.session.status, 'active');
+  assert.strictEqual('conversation_history' in state, false);
+  assert.strictEqual('last_llm_output' in state.session, false);
+  state.choice_history.pop();
+  assert.strictEqual(session.choice_history.length, 12);
+});
+
+test('stateForPrompt leaves a choice history of 8 or fewer unchanged', () => {
+  const svc = new NarrationService({}, 'key');
+  for (const count of [0, 1, 8]) {
+    const session = {
+      session: { turn_count: count, last_llm_output: 'PREVIOUS NARRATION' },
+      reader: { location: 'apothecary' },
+      story: { flags: { story_started: true }, plot_beats_hit: [] },
+      choice_history: choicesUpTo(count),
+    };
+    const before = structuredClone(session);
+    const state = svc.stateForPrompt(session);
+
+    assert.deepStrictEqual(session, before, `saved history of ${count}`);
+    assert.deepStrictEqual(state.choice_history, before.choice_history, `prompt history of ${count}`);
+    assert.strictEqual(state.choice_history.length, count);
+    assert.strictEqual(state.reader.location, 'apothecary');
+    assert.deepStrictEqual(state.story, before.story);
+    assert.strictEqual(state.session.turn_count, count);
+    assert.strictEqual('last_llm_output' in state.session, false);
+  }
+});
+
+test('the saved choice_history stays whole after the prompt is built and after a play', async (t) => {
+  const svc = new NarrationService(await loadStories(t), 'key');
+  const session = await freshSession();
+  session.choice_history = choicesUpTo(12);
+  const savedChoices = structuredClone(session.choice_history);
+
+  const before = structuredClone(session);
+  const { userMessage } = svc.buildPrompt(session, actionFor(13));
+  assert.deepStrictEqual(session, before);
+  assert.deepStrictEqual(session.choice_history, savedChoices);
+
+  const state = stateBlock(userMessage);
+  assert.deepStrictEqual(state.choice_history, savedChoices.slice(-PROMPT_HISTORY_TURNS));
+  assert.deepStrictEqual(state.choice_history.map(entry => entry.turn), [5, 6, 7, 8, 9, 10, 11, 12]);
+  assert.strictEqual(state.reader.name, session.reader.name);
+  assert.strictEqual(state.session.turn_count, session.session.turn_count);
+
+  await playTurn(t, svc, session, 13);
+  assert.strictEqual(session.choice_history.length, 13);
+  assert.deepStrictEqual(session.choice_history.slice(0, 12), savedChoices);
+  assert.strictEqual(session.choice_history[12].action, 'looked closer on turn 13');
 });
 
 test('every past turn appears exactly once in the full request', async (t) => {

@@ -117,10 +117,15 @@ class NarrationService {
   // The session state as the AI sees it in the final user message. Earlier
   // turns are already sent once as chat messages, so conversation_history is
   // left out here, and so is last_llm_output, which repeats the last of them
-  // (get_last_narration reads it from the session itself). Works on a copy so
-  // the saved session keeps both.
+  // (get_last_narration reads it from the session itself). Cut turns are in
+  // the recap and recent turns are in the history, so choice_history in this
+  // copy keeps only the last PROMPT_HISTORY_TURNS entries. The saved session
+  // is not changed, and nothing else in the state is either.
   stateForPrompt(session) {
     const { conversation_history, ...state } = session;
+    if (Array.isArray(state.choice_history) && state.choice_history.length > PROMPT_HISTORY_TURNS) {
+      state.choice_history = state.choice_history.slice(-PROMPT_HISTORY_TURNS);
+    }
     if (!state.session) return state;
     const { last_llm_output, ...meta } = state.session;
     return { ...state, session: meta };
