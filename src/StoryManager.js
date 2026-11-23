@@ -60,6 +60,58 @@ class StoryManager {
   getConcludingDirective() {
     return this.concludingDirective;
   }
+
+  // Preamble (title, world, characters, story structure heading) plus the
+  // requested act. Later acts, and anything after the last act, are left out.
+  // A missing act number, or a heading that is not in the file, falls back to
+  // the full story and logs a warning.
+  getStoryContentForAct(storyId, actNumber) {
+    const story = this.getStory(storyId);
+    if (!story) {
+      console.warn(`[story] story=${storyId} is not loaded; sending no story text`);
+      return '';
+    }
+    const trimmed = storyContentForAct(story.content, actNumber);
+    if (trimmed == null) {
+      const shown = actNumber === undefined || actNumber === null || actNumber === ''
+        ? 'missing'
+        : String(actNumber);
+      console.warn(`[story] story=${storyId} current_act=${shown} has no matching heading; sending the full story`);
+      return story.content;
+    }
+    return trimmed;
+  }
+}
+
+// Splits on lines that begin `### Act N`. Returns null when the act cannot
+// be selected, so the caller falls back to the full file.
+function storyContentForAct(content, actNumber) {
+  const act = Number(actNumber);
+  const headings = [];
+  const actHeading = /^### Act (\d+)\b.*$/gm;
+  let match;
+  while ((match = actHeading.exec(content)) !== null) {
+    headings.push({ number: Number(match[1]), index: match.index });
+  }
+  if (!Number.isInteger(act) || act < 1 || headings.length === 0) return null;
+
+  const found = headings.findIndex(heading => heading.number === act);
+  if (found === -1) return null;
+
+  const preamble = content.slice(0, headings[0].index);
+  const start = headings[found].index;
+  let end;
+  if (found + 1 < headings.length) {
+    end = headings[found + 1].index;
+  } else {
+    // The last act runs up to the next top-level `## ` heading, so the state
+    // tracking reference and author notes stay out of the prompt.
+    const topLevel = /^## /gm;
+    topLevel.lastIndex = start;
+    const next = topLevel.exec(content);
+    end = next ? next.index : content.length;
+  }
+  return preamble + content.slice(start, end);
 }
 
 module.exports = StoryManager;

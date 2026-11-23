@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const NarrationService = require('../src/NarrationService');
+const StoryManager = require('../src/StoryManager');
 const { validateStateUpdate } = require('../src/StateValidator');
 
 const ROOT = path.join(__dirname, '..');
@@ -113,4 +114,39 @@ test('story config: Elara\'s final phase waits for the reunion on the Halden pat
   const session = JSON.parse(JSON.stringify(template));
   const { systemContext } = service.buildPrompt(session, 'I look around');
   assert.ok(systemContext.includes(JSON.stringify(finalPhase.note)), 'the note is in the config sent to the AI');
+});
+
+test('buildPrompt: uses session.story.current_act when building systemContext', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const manager = new StoryManager(path.join(ROOT, 'stories'), path.join(ROOT, 'prompts'));
+  await manager.loadStoryData();
+  const seen = [];
+  if (typeof manager.getStoryContentForAct === 'function') {
+    const selectAct = manager.getStoryContentForAct.bind(manager);
+    manager.getStoryContentForAct = (storyId, actNumber) => {
+      seen.push({ storyId, actNumber });
+      return selectAct(storyId, actNumber);
+    };
+  }
+  const service = new NarrationService(manager, 'key');
+  const session = JSON.parse(JSON.stringify(template));
+
+  session.story.current_act = 1;
+  const act1 = service.buildPrompt(session, 'I look around').systemContext;
+  assert.match(act1, /Scene 1: Morning in the Apothecary/);
+  assert.doesNotMatch(act1, /Scene 2: The Crossroads/);
+  assert.doesNotMatch(act1, /Scene 3: The Moonpetal/);
+  assert.doesNotMatch(act1, /## Author Notes/);
+
+  session.story.current_act = 3;
+  const act3 = service.buildPrompt(session, 'I look around').systemContext;
+  assert.match(act3, /Scene 3: The Moonpetal/);
+  assert.match(act3, /# The Herbalist's Choice/);
+  assert.doesNotMatch(act3, /## State Tracking Reference/);
+  assert.doesNotMatch(act3, /## Author Notes/);
+
+  assert.deepStrictEqual(seen, [
+    { storyId: 'the-herbalists-choice', actNumber: 1 },
+    { storyId: 'the-herbalists-choice', actNumber: 3 },
+  ]);
 });
