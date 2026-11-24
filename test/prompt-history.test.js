@@ -100,19 +100,71 @@ function messagesFor(count) {
   }));
 }
 
+// Mirrors NarrationService: drop a fenced JSON state block and the same
+// bracket markers, then take the first sentence, trimmed, clipped at 200
+// characters with `...` when the sentence itself is longer.
+const NARRATION_EXCERPT_MAX = 200;
+const JSON_BLOCK = /```json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```/i;
+const FIRST_SENTENCE = /^[\s\S]+?[.!?]+(?=(?:["')\]]+)?(?:\s|$))/;
+
+function narrationExcerpt(content) {
+  if (typeof content !== 'string') return null;
+  let text = content.replace(JSON_BLOCK, '').trim();
+  text = text.replace(/\[State updated\]/gi, '').trim();
+  text = text.replace(/\[Thinking\]/gi, '').trim();
+  text = text.replace(/\[.*?updated.*?\]/gi, '').trim();
+  if (text === '') return null;
+  const matched = text.match(FIRST_SENTENCE);
+  const sentence = (matched ? matched[0] : text).trim();
+  if (sentence === '') return null;
+  if (sentence.length <= NARRATION_EXCERPT_MAX) return sentence;
+  return `${sentence.slice(0, NARRATION_EXCERPT_MAX - 3)}...`;
+}
+
+function savedTurnCount(session) {
+  const history = session && Array.isArray(session.conversation_history) ? session.conversation_history : [];
+  let turns = 0;
+  for (let i = 0; i < history.length; i++) {
+    if (history[i].role === 'user' && i + 1 < history.length && history[i + 1].role === 'assistant') {
+      turns += 1;
+      i += 1;
+    }
+  }
+  return turns;
+}
+
+function cutTurnCount(session) {
+  const turns = savedTurnCount(session);
+  if (turns <= PROMPT_HISTORY_TURNS + PROMPT_HISTORY_STEP) return 0;
+  return Math.floor((turns - PROMPT_HISTORY_TURNS) / PROMPT_HISTORY_STEP) * PROMPT_HISTORY_STEP;
+}
+
 // After the fixed label and the closing pointer, every remaining word has to
-// be a choice value. Flags, plot beats and secrets are not copied into the recap.
+// be a choice value or a cut-turn narration excerpt. Flags, plot beats and
+// secrets are not copied into the recap.
 function assertRecapCopiesStateOnly(recap, session) {
   assert.ok(recap.startsWith(RECAP_LABEL), recap);
   assert.ok(recap.endsWith(RECAP_STATE_LINE), recap);
   let rest = recap.slice(RECAP_LABEL.length, recap.length - RECAP_STATE_LINE.length);
-  const allowed = ['Turn'];
+  const cut = cutTurnCount(session);
+  const allowed = ['Turn', 'narration'];
   for (const entry of session.choice_history || []) {
-    if (typeof entry.turn === 'number' && entry.turn > 8) continue;
+    if (typeof entry.turn === 'number' && entry.turn > cut) continue;
     for (const key of ['turn', 'action', 'consequence']) {
       const value = entry[key];
       if (typeof value === 'string' && value !== '') allowed.push(value);
       if (typeof value === 'number') allowed.push(String(value));
+    }
+  }
+  const history = session && Array.isArray(session.conversation_history) ? session.conversation_history : [];
+  let seen = 0;
+  for (let i = 0; i < history.length && seen < cut; i++) {
+    if (history[i].role === 'user' && i + 1 < history.length && history[i + 1].role === 'assistant') {
+      seen += 1;
+      allowed.push(String(seen));
+      const excerpt = narrationExcerpt(history[i + 1].content);
+      if (excerpt) allowed.push(excerpt);
+      i += 1;
     }
   }
   const unique = [...new Set(allowed)].sort((a, b) => b.length - a.length);
@@ -537,15 +589,27 @@ test('the recap is one line per item and copies only the cut state', () => {
 
   const history = svc.historyForPrompt(session);
   const recap = recapPart(history[0].content);
+  const narrationLine = (turn) => `Turn ${turn} narration: ${narrationFor(turn)}`;
   assert.strictEqual(recap, [
     'Recap of earlier turns, not a new reader action.',
     '',
+    narrationLine(1),
+    narrationLine(2),
     'Turn 3: checked the kettle -> the lid was warm',
+    narrationLine(3),
     'Turn 4: opened the window',
+    narrationLine(4),
     'asked Tomas -> he looked away',
+    narrationLine(5),
+    narrationLine(6),
+    narrationLine(7),
+    narrationLine(8),
     '',
     'Current flags, plot beats and secrets are in the Current Session State below.',
   ].join('\n'));
+  for (const turn of [1, 2, 5, 6, 7, 8]) {
+    assert.strictEqual(recap.includes(`Turn ${turn}:`), false, `turn ${turn} is narration only`);
+  }
   assert.strictEqual(recap.includes('reader_checked_elara'), false);
   assert.strictEqual(recap.includes('forest_entered'), false);
   assert.strictEqual(recap.includes('tomas_involved'), false);
@@ -554,6 +618,68 @@ test('the recap is one line per item and copies only the cut state', () => {
   assert.strictEqual(recap.includes('secret one'), false);
   assert.strictEqual(recap.includes('knows the garden'), false);
   assert.strictEqual(recap.includes('this later choice must stay out of the recap'), false);
+  assertRecapCopiesStateOnly(recap, session);
+});
+
+test('a cut turn narration line keeps the first sentence and clips it at 200 characters', () => {
+  const svc = new NarrationService({}, 'key');
+  const session = sessionForTurns(17, {
+    choice_history: [
+      { turn: 1, action: 'checked the kettle', consequence: 'the lid was warm' },
+    ],
+    story: { flags: { reader_checked_elara: true }, plot_beats_hit: ['elara_found_sick'] },
+    characters: { elara: { revealed_secrets: ['the torn page names moonpetal'] } },
+  });
+  const longSentence = 'You trace the grain of the shelf '.repeat(12).trimEnd();
+  const exactSentence = 'B'.repeat(200);
+  assert.ok(longSentence.length > 200);
+  assert.strictEqual(/[.!?]/.test(longSentence), false);
+  session.conversation_history[1].content = 'The kettle is warm. The window stays shut and the room is still.';
+  session.conversation_history[3].content = longSentence;
+  session.conversation_history[5].content = [
+    'Elara does not answer.',
+    '',
+    '```json',
+    JSON.stringify({
+      story: { flags: { reader_checked_elara: true }, plot_beats_hit: ['elara_found_sick'] },
+      characters: { elara: { revealed_secrets: ['the torn page names moonpetal'] } },
+    }),
+    '```',
+    '[State updated]',
+  ].join('\n');
+  session.conversation_history[7].content = '';
+  session.conversation_history[9].content = '```json\n{"story":{"flags":{"forest_entered":true}}}\n```';
+  session.conversation_history[11].content = exactSentence;
+  session.conversation_history[13].content = 'Are you leaving? The door is open.';
+  const before = structuredClone(session);
+
+  const history = svc.historyForPrompt(session);
+  const recap = recapPart(history[0].content);
+  const clipped = `${longSentence.slice(0, 197)}...`;
+
+  assert.deepStrictEqual(session, before);
+  assert.strictEqual(clipped.length, 200);
+  assert.ok(clipped.endsWith('...'));
+  const choiceAt = recap.indexOf('Turn 1: checked the kettle -> the lid was warm');
+  const narrationAt = recap.indexOf('Turn 1 narration: The kettle is warm.');
+  assert.ok(choiceAt !== -1 && narrationAt > choiceAt);
+  assert.strictEqual(recap.includes('The window stays shut'), false);
+  assert.strictEqual(recap.includes('Turn 2:'), false);
+  assert.ok(recap.includes(`Turn 2 narration: ${clipped}`));
+  assert.strictEqual(recap.includes(longSentence), false);
+  assert.ok(recap.includes('Turn 3 narration: Elara does not answer.'));
+  assert.strictEqual(recap.includes('reader_checked_elara'), false);
+  assert.strictEqual(recap.includes('elara_found_sick'), false);
+  assert.strictEqual(recap.includes('the torn page names moonpetal'), false);
+  assert.strictEqual(recap.includes('```'), false);
+  assert.strictEqual(recap.includes('[State updated]'), false);
+  assert.strictEqual(recap.includes('Turn 4 narration:'), false);
+  assert.strictEqual(recap.includes('Turn 5 narration:'), false);
+  assert.strictEqual(recap.includes('forest_entered'), false);
+  assert.ok(recap.includes(`Turn 6 narration: ${exactSentence}`));
+  assert.strictEqual(recap.includes(`${exactSentence}...`), false);
+  assert.ok(recap.includes('Turn 7 narration: Are you leaving?'));
+  assert.strictEqual(recap.includes('The door is open.'), false);
   assertRecapCopiesStateOnly(recap, session);
 });
 
@@ -575,15 +701,18 @@ test('an unpaired assistant just after the cut keeps the recap as its own user m
   const history = svc.historyForPrompt(session);
 
   assert.deepStrictEqual(session, before);
+  const recapLines = [
+    'Recap of earlier turns, not a new reader action.',
+    '',
+  ];
+  for (let turn = 1; turn <= 8; turn++) {
+    if (turn === 2) recapLines.push('Turn 2: checked the kettle -> the lid was warm');
+    recapLines.push(`Turn ${turn} narration: ${narrationFor(turn)}`);
+  }
+  recapLines.push('', 'Current flags, plot beats and secrets are in the Current Session State below.');
   assert.deepStrictEqual(history[0], {
     role: 'user',
-    content: [
-      'Recap of earlier turns, not a new reader action.',
-      '',
-      'Turn 2: checked the kettle -> the lid was warm',
-      '',
-      'Current flags, plot beats and secrets are in the Current Session State below.',
-    ].join('\n'),
+    content: recapLines.join('\n'),
   });
   assert.deepStrictEqual(history[1], { role: 'assistant', content: 'ORPHAN ASSISTANT BETWEEN CUT AND KEEP' });
   assert.strictEqual(history[2].content, actionFor(9));
@@ -638,6 +767,10 @@ test('recap text and the prompt prefix stay identical for turns 17 to 23 when fl
     assert.deepStrictEqual(prompts[i].slice(0, prompts[0].length), prompts[0]);
   }
   assert.ok(recaps[0].endsWith(RECAP_STATE_LINE));
+  assert.ok(recaps[0].includes(`Turn 1 narration: ${narrationFor(1)}`));
+  assert.ok(recaps[0].includes(`Turn 8 narration: ${narrationFor(8)}`));
+  assert.strictEqual(recaps[0].includes('Turn 9 narration:'), false);
+  assert.strictEqual(recaps[0].includes(narrationFor(9)), false);
   assert.strictEqual(recaps[0].includes('flag_added_on_turn_'), false);
   assert.strictEqual(recaps[0].includes('beat from turn'), false);
   assert.strictEqual(recaps[0].includes('secret from turn'), false);
@@ -650,11 +783,15 @@ test('24 turns move the cut to the first 16', () => {
   const at24 = svc.historyForPrompt(sessionForTurns(24));
 
   assert.notDeepStrictEqual(at24[0], at23[0]);
+  assert.notStrictEqual(recapPart(at24[0].content), recapPart(at23[0].content));
   assert.ok(at24[0].content.startsWith(RECAP_LABEL));
   assert.ok(at24[0].content.endsWith(`\n\n---\n\n${actionFor(17)}`));
   assert.strictEqual(at24.length, 16);
   assert.ok(at24[0].content.includes('looked closer on turn 16'));
+  assert.ok(at24[0].content.includes(`Turn 16 narration: ${narrationFor(16)}`));
   assert.strictEqual(at24[0].content.includes('looked closer on turn 17'), false);
+  assert.strictEqual(at24[0].content.includes('Turn 17 narration:'), false);
+  assert.strictEqual(recapPart(at23[0].content).includes('Turn 9 narration:'), false);
   for (let turn = 1; turn <= 16; turn++) {
     assert.strictEqual(at24.some(message => message.content === actionFor(turn)), false);
     assert.strictEqual(at24.some(message => message.content === narrationFor(turn)), false);
