@@ -4,16 +4,16 @@ const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 
 // Control characters, including newlines and tabs, become spaces. The result
-// is a single trimmed line of at most 32 characters. Nothing left means the
-// caller should keep the template name.
+// is a single trimmed line of at most 32 characters, counted by code point
+// so a character on the cut is kept whole or dropped whole. Nothing left
+// means the caller should keep the template name.
 function tidyReaderName(username) {
   if (typeof username !== 'string') return '';
-  return username
+  const name = username
     .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 32)
     .trim();
+  return Array.from(name).slice(0, 32).join('').trim();
 }
 
 /** session-<userId>-<n>.json, and not a temp or any other stray file. */

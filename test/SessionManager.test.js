@@ -708,3 +708,65 @@ test('withUserLock: a later call queues normally once a nested call has finished
 
   assert.deepStrictEqual(events, ['nested', 'first end', 'second']);
 });
+
+function hasLoneSurrogate(value) {
+  return /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(value);
+}
+
+test('createSession: an emoji straddling the 32-character cut is kept or dropped whole', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  const emoji = '\u{1F600}';
+  assert.strictEqual(emoji.length, 2);
+  assert.strictEqual(Array.from(emoji).length, 1);
+
+  // 31 letters, then an emoji. Counted by code unit the cut falls between the
+  // two halves of the emoji. Counted by character it is the 32nd character.
+  const kept = await manager.createSession('42', `${'a'.repeat(31)}${emoji}tail`, 'the-herbalists-choice');
+  const keptName = `${'a'.repeat(31)}${emoji}`;
+  assert.strictEqual(kept.session.session.reader_name, keptName);
+  assert.strictEqual(kept.session.reader.name, keptName);
+  assert.strictEqual(Array.from(keptName).length, 32);
+  assert.strictEqual(hasLoneSurrogate(kept.session.session.reader_name), false);
+  assert.strictEqual(hasLoneSurrogate(kept.session.reader.name), false);
+
+  const savedKept = JSON.parse(await fs.readFile(path.join(dir, 'session-42-1.json'), 'utf8'));
+  assert.strictEqual(savedKept.session.reader_name, keptName);
+  assert.strictEqual(savedKept.reader.name, keptName);
+  assert.strictEqual(hasLoneSurrogate(savedKept.session.reader_name), false);
+
+  // 32 letters, then an emoji. The emoji is past the cap and is dropped whole.
+  const dropped = await manager.createSession('42', `${'b'.repeat(32)}${emoji}`, 'the-herbalists-choice');
+  const droppedName = 'b'.repeat(32);
+  assert.strictEqual(dropped.session.session.reader_name, droppedName);
+  assert.strictEqual(dropped.session.reader.name, droppedName);
+  assert.strictEqual(droppedName.includes(emoji), false);
+  assert.strictEqual(hasLoneSurrogate(dropped.session.session.reader_name), false);
+
+  const savedDropped = JSON.parse(await fs.readFile(path.join(dir, 'session-42-2.json'), 'utf8'));
+  assert.strictEqual(savedDropped.session.reader_name, droppedName);
+  assert.strictEqual(savedDropped.reader.name, droppedName);
+  assert.strictEqual(hasLoneSurrogate(savedDropped.session.reader_name), false);
+});
+
+test('createSession: a trailing space after the character cut is trimmed', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  const emoji = '\u{1F600}';
+
+  const plain = await manager.createSession('42', `${'a'.repeat(31)} more-name`, 'the-herbalists-choice');
+  assert.strictEqual(plain.session.session.reader_name, 'a'.repeat(31));
+  assert.strictEqual(plain.session.reader.name, 'a'.repeat(31));
+  assert.strictEqual(plain.session.session.reader_name.endsWith(' '), false);
+
+  // 30 letters and an emoji are 31 characters. The space is the 32nd, so the
+  // cap includes it and the trim after the cut has to remove it.
+  const expected = `${'n'.repeat(30)}${emoji}`;
+  const spaced = await manager.createSession('42', `${expected} more`, 'the-herbalists-choice');
+  assert.strictEqual(spaced.session.session.reader_name, expected);
+  assert.strictEqual(spaced.session.reader.name, expected);
+  assert.strictEqual(spaced.session.session.reader_name.endsWith(' '), false);
+  assert.strictEqual(hasLoneSurrogate(spaced.session.session.reader_name), false);
+
+  const saved = JSON.parse(await fs.readFile(path.join(dir, 'session-42-2.json'), 'utf8'));
+  assert.strictEqual(saved.session.reader_name, expected);
+  assert.strictEqual(saved.reader.name, expected);
+});
