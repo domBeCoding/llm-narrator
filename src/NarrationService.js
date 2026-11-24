@@ -22,6 +22,13 @@ const PROMPT_HISTORY_TURNS = 8;
 const PROMPT_HISTORY_STEP = 8;
 const RECAP_LABEL = 'Recap of earlier turns, not a new reader action.';
 const RECAP_STATE_LINE = 'Current flags, plot beats and secrets are in the Current Session State below.';
+// The narration line is `Turn N narration:` plus this excerpt. 200 is the
+// maximum, and the three dots of a clip count toward it.
+const NARRATION_EXCERPT_MAX = 200;
+const NARRATION_ELLIPSIS = '...';
+// The first sentence runs through the first `.`, `!` or `?`. A closing quote
+// or bracket may sit against that mark. With no mark, the whole text is used.
+const FIRST_SENTENCE = /^[\s\S]+?[.!?]+(?=(?:["')\]]+)?(?:\s|$))/;
 
 // A flag that is absent or undefined counts as false, so an old save that
 // never stored the key still meets a condition expecting false. A condition
@@ -443,12 +450,93 @@ function choiceLines(session, cutTurns) {
   return lines;
 }
 
-// Choice lines for the cut turns, then a pointer to the live session state.
-// Flags, plot beats and secrets already travel in that state every turn, so
-// repeating them here would change the cached prefix whenever they change.
+// Turn number written by choiceLine, or null when the line has none.
+function choiceTurnNumber(line) {
+  const match = /^Turn (\d+)(?:: |$)/.exec(line);
+  if (!match) return null;
+  const turn = Number(match[1]);
+  return Number.isInteger(turn) ? turn : null;
+}
+
+// Same stripping as parseResponse. Saved history usually already stores the
+// narration with the state block removed. A reply that still contains a
+// fenced JSON block, or the bracket markers parseResponse drops, is cleaned
+// again here so the excerpt cannot pick up that state update.
+function narrationText(content) {
+  if (typeof content !== 'string') return '';
+  let text = content.replace(JSON_BLOCK, '').trim();
+  text = text.replace(/\[State updated\]/gi, '').trim();
+  text = text.replace(/\[Thinking\]/gi, '').trim();
+  text = text.replace(/\[.*?updated.*?\]/gi, '').trim();
+  return text;
+}
+
+// First sentence of a cut turn's saved assistant reply. Empty once the state
+// block is gone means there is no narration line.
+function narrationExcerpt(content) {
+  const text = narrationText(content);
+  if (text === '') return null;
+  const matched = text.match(FIRST_SENTENCE);
+  const sentence = (matched ? matched[0] : text).trim();
+  if (sentence === '') return null;
+  if (sentence.length <= NARRATION_EXCERPT_MAX) return sentence;
+  return sentence.slice(0, NARRATION_EXCERPT_MAX - NARRATION_ELLIPSIS.length) + NARRATION_ELLIPSIS;
+}
+
+// Narration lines for cut turns 1..cutTurns, keyed by that turn number.
+// indexTurns counts reader-and-reply pairs, which is the same numbering the
+// choice lines use.
+function narrationLinesByTurn(session, cutTurns) {
+  const history = session && Array.isArray(session.conversation_history)
+    ? session.conversation_history
+    : [];
+  const turns = indexTurns(history);
+  const byTurn = new Map();
+  const limit = Math.min(cutTurns, turns.length);
+  for (let index = 0; index < limit; index++) {
+    const message = history[turns[index].start + 1];
+    const excerpt = narrationExcerpt(message && message.content);
+    if (excerpt === null) continue;
+    const turn = index + 1;
+    byTurn.set(turn, `Turn ${turn} narration: ${excerpt}`);
+  }
+  return byTurn;
+}
+
+// One block per cut turn, in turn order: the choice line for that turn, when
+// there is one, then `Turn N narration:` and the excerpt under it. A cut turn
+// with no choice still gets the narration line. A choice with no turn number
+// stays, placed after the numbered turn it follows in choice_history (or at
+// the top, if it precedes every numbered turn). Flags, plot beats and secrets
+// stay out. They already travel in the session state, and copying them would
+// change this prefix whenever they change. The text depends only on the cut.
 function recapEarlierTurns(session, cutTurns) {
-  const choices = choiceLines(session, cutTurns);
-  const body = choices.length ? `${choices.join('\n')}\n\n` : '';
+  const choicesByTurn = new Map();
+  const unnumberedAfter = new Map();
+  unnumberedAfter.set(0, []);
+  let lastTurn = 0;
+  for (const line of choiceLines(session, cutTurns)) {
+    const turn = choiceTurnNumber(line);
+    if (turn !== null && turn >= 1 && turn <= cutTurns) {
+      if (!choicesByTurn.has(turn)) choicesByTurn.set(turn, []);
+      choicesByTurn.get(turn).push(line);
+      lastTurn = turn;
+    } else {
+      if (!unnumberedAfter.has(lastTurn)) unnumberedAfter.set(lastTurn, []);
+      unnumberedAfter.get(lastTurn).push(line);
+    }
+  }
+
+  const narrationByTurn = narrationLinesByTurn(session, cutTurns);
+  const lines = [];
+  for (const line of unnumberedAfter.get(0)) lines.push(line);
+  for (let turn = 1; turn <= cutTurns; turn++) {
+    for (const line of choicesByTurn.get(turn) || []) lines.push(line);
+    const narration = narrationByTurn.get(turn);
+    if (narration) lines.push(narration);
+    for (const line of unnumberedAfter.get(turn) || []) lines.push(line);
+  }
+  const body = lines.length ? `${lines.join('\n')}\n\n` : '';
   return `${RECAP_LABEL}\n\n${body}${RECAP_STATE_LINE}`;
 }
 
