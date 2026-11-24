@@ -46,7 +46,13 @@ Then begin the story.
 
 ## Ending the Story
 
-When all `end_conditions.all_required` are satisfied, begin winding down. On the final turn, use the ending format from `prompts/system-prompt.md`:
+When all `end_conditions.all_required` are satisfied, begin winding down, unless `hold_while` holds the ending. `hold_while` is an optional array of condition groups with the same shape as `all_required`. If every condition in any one group matches, the ending is held even when `all_required` is met. An empty group is ignored. A story with no `hold_while` ends as before.
+
+The Herbalist's Choice holds while `halden_agreed_to_help` is true and `halden_reconciled` is false. The `halden_turned_away` ending also requires `halden_agreed_to_help` to be false.
+
+A missing or undefined flag counts as false. A condition expecting false matches on an old save without the key. A condition expecting true does not.
+
+On the final turn, use the ending format from `prompts/system-prompt.md`:
 
 ```
 <closing scene>
@@ -59,6 +65,8 @@ The End
 ```
 
 Do not set `session.status` or `session.ending_variant`. The application records `ending_variant` as an array of matching variant ids, or leaves it null, when the story first moves to concluding, and sets `status` to `"completed"` after the concluding story turn.
+
+What the model is sent, including compacted history and minutes since the last action, is described in `docs/state-management.md`.
 
 ## Tool Scope
 

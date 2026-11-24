@@ -247,12 +247,11 @@ The application layer (the Discord bot) owns state; the LLM only narrates and re
 │  2. Bot loads the session state file                    │
 │                                                         │
 │  3. Bot builds the prompt:                              │
-│     - System prompt (role, rules)                       │
-│     - Earlier turns, as chat messages                   │
-│     - Current session state, without the history        │
-│     - Story context (story.md)                          │
-│     - Story config (flags, end conditions, variants)    │
-│     - Reader's action for this turn                     │
+│     - System prompt and full story config               │
+│     - Story text: preamble and current act              │
+│     - Earlier turns, compacted (see below)              │
+│     - Session state, saved history omitted              │
+│     - Reader action, plus minutes since last            │
 │                                                         │
 │  4. LLM returns narration + a fenced JSON state block   │
 │                                                         │
@@ -275,7 +274,11 @@ The application layer (the Discord bot) owns state; the LLM only narrates and re
 └─────────────────────────────────────────────────────────┘
 ```
 
-Each earlier turn is sent once, as a chat message. The session state in the final user message leaves out `conversation_history` and `session.last_llm_output`, which repeats the last narration. Both are still saved in the session file, and the `get_last_narration` tool reads `last_llm_output` from there.
+A history of 16 turns or fewer is sent whole. A turn is one reader message and the assistant reply after it. Above that, the first `floor((turns - 8) / 8) * 8` turns are cut and 8 to 15 recent turns are sent. The cut turns go into one recap. That recap is merged into the first kept reader message. If the first kept message is from the assistant, the recap stays its own reader message in front of it, so two reader messages are not sent in a row. A message that is not part of a reader-and-reply pair is not a turn and stays where it is. The recap lists the choice lines for the cut turns, plus any choice with no turn number, then points at the current session state. The saved `conversation_history` is left untouched.
+
+The session state in the final user message leaves out `conversation_history` and `session.last_llm_output`, which repeats the last narration. Both are still saved in the session file, and the `get_last_narration` tool reads `last_llm_output` from there. `choice_history` in this prompt copy is capped at the last 8 entries. The save keeps all of it.
+
+The story text in the system context is the preamble plus the current act. Later acts, and the notes after the last act, are left out. If the current act is missing or has no matching heading, the full story file is sent and a warning is logged. The system context also carries the narrator line, the full system prompt and the whole story config. The reader action carries `Minutes since the last action: N` when the previous action time is valid. N is whole minutes, and a clock time in the future counts as 0. A missing or invalid time leaves the line out.
 
 ### Session Status Lifecycle
 
@@ -284,21 +287,25 @@ The session `status` field transitions through three states, managed entirely by
 | Status | Meaning | Who sets it | Reader experience |
 |---|---|---|---|
 | `active` | Story in progress | Set at session creation | Normal turns with choices |
-| `concluding` | All end conditions met; next turn is the ending | Set by bot after `evaluateEndConditions` passes | One more action, then the closing scene |
+| `concluding` | `all_required` met and no `hold_while` group matches; next turn is the ending | Set by bot after `evaluateEndConditions` passes | One more action, then the closing scene |
 | `completed` | Story is over; further play is blocked | Set by bot after the concluding story turn (a reply with a state block) | "Use `/restart` to play again" |
 
 **How the transition works:**
 
-1. After every turn, the bot calls `evaluateEndConditions(session, config)` which checks all `end_conditions.all_required` predicates against the current state.
-2. If all pass and the session is `active`, the bot sets `status = 'concluding'` and records `ending_variant`. Every ending variant whose conditions all match the current flags is saved, in config order. Mixed routes are kept together (for example both `halden_reconciled` and `tomas_helped`). If none match, `ending_variant` stays null, a warning is logged, and the story still moves to `concluding`.
-3. On the next turn, the bot sees `status === 'concluding'` and injects a **FINAL TURN — ENDING DIRECTIVE** into the LLM prompt. The directive names the recorded variant id or ids and their descriptions, and tells the LLM to weave those into the closing scene. The LLM does not choose the ending. `/status` shows a short label for each recorded id while `ending_variant` is set, including after the session is completed.
-4. After the concluding story turn, the bot sets `status = 'completed'` and keeps the recorded `ending_variant`. Further messages are rejected. A healthcheck, clarification or resume reply on the final turn has no state block, so the story stays `concluding`, the ending is unchanged, and the reader's next real action gets the ending. The directive tells the AI to answer those messages as usual and keep the ending for a story action.
+1. After every turn, the bot calls `evaluateEndConditions(session, config)`. Every condition in `end_conditions.all_required` must match. `hold_while` is an optional array of condition groups, and each group has the same shape as `all_required`. If every condition in any one group matches, `evaluateEndConditions` returns false and the ending is held, even when `all_required` is met. An empty group is ignored, and so is a group that is not an array. A story with no `hold_while` ends as before.
+
+   The Herbalist's Choice holds while `halden_agreed_to_help` is true and `halden_reconciled` is false. The `halden_turned_away` variant also requires `halden_agreed_to_help` to be false.
+
+2. `flagMatches` treats a missing or undefined flag as false. A condition expecting false matches on an old save without the key. A condition expecting true does not. Ending variant matching uses the same rule. An old save with no `halden_agreed_to_help` key does not hold the ending, and that missing key meets the false condition on `halden_turned_away`.
+3. If `evaluateEndConditions` passes and the session is `active`, the bot sets `status = 'concluding'` and records `ending_variant`. Every ending variant whose conditions all match the current flags is saved, in config order. Mixed routes are kept together (for example both `halden_reconciled` and `tomas_helped`). If none match, `ending_variant` stays null, a warning is logged, and the story still moves to `concluding`.
+4. On the next turn, the bot sees `status === 'concluding'` and injects a **FINAL TURN — ENDING DIRECTIVE** into the LLM prompt. The directive names the recorded variant id or ids and their descriptions, and tells the LLM to weave those into the closing scene. The LLM does not choose the ending. `/status` shows a short label for each recorded id while `ending_variant` is set, including after the session is completed.
+5. After the concluding story turn, the bot sets `status = 'completed'` and keeps the recorded `ending_variant`. Further messages are rejected. A healthcheck, clarification or resume reply on the final turn has no state block, so the story stays `concluding`, the ending is unchanged, and the reader's next real action gets the ending. The directive tells the AI to answer those messages as usual and keep the ending for a story action.
 
 The LLM never sets `status` or `ending_variant`. Both are application decisions. A state block that includes them is rejected. `ending_variant` is an array of ids, or null when none is set.
 
 ### Target Turn Cycle (with validation)
 
-Validation of the model's proposed changes against the story config is implemented in `src/StateValidator.js` (see "Validation Rules" below). Re-prompting the model after a rejection, and the wider checks in step 6, are not built yet. The intended shape:
+Validation of the model's proposed changes against the story config is implemented in `src/StateValidator.js` (see "Validation Rules" below). Re-prompting the model after a rejection, and the wider checks in step 6, are not built yet. Prompt history is already compacted, as described in the current turn cycle. The intended shape:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -456,7 +463,7 @@ llm-narrator/
     └── the-herbalists-choice-config.json ← mechanical: flags, plot beats, paths, end conditions, ending variants
 ```
 
-The story MD file is the author's narrative design — read by the LLM for context. The story config JSON is the mechanical rulebook — read by the system for state validation, end condition checking, and ending variant selection. Both are static and read-only during a session.
+The story markdown file is the author's narrative design. The prompt sends the preamble and the current act from it, as described in the turn cycle above. The story config JSON is the mechanical rulebook. The system uses it for state validation, end condition checking and ending variant selection, and the prompt still includes the whole config. Both files are static and read-only during a session.
 
 ---
 
@@ -483,7 +490,7 @@ The story MD file is the author's narrative design — read by the LLM for conte
 2. **How much state should be injected into context each turn?**
    - Full state: most reliable, but consumes context window.
    - Delta only (what changed since last turn): lighter, but the LLM might miss context.
-   - Recommendation: inject full state for short stories; implement summarization for longer ones.
+   - Recommendation: inject full state for short stories; implement summarisation for longer ones. History sent to the model, and `choice_history` in the prompt state, are already compacted (see the current turn cycle). The rest of the session state is still sent in full.
 
 3. **Should the system use a separate "classifier" LLM call to detect the reader's intent before narration?**
    - This would let the system update state deterministically (e.g., "reader said 'go to Halden's cottage' → set reader.location = haldens_cottage") before the narration LLM even runs.
