@@ -102,10 +102,12 @@ function messagesFor(count) {
 
 // Mirrors NarrationService: drop a fenced JSON state block and the same
 // bracket markers, then take the first sentence, trimmed, clipped at 200
-// characters with `...` when the sentence itself is longer.
+// characters with `...` when the sentence itself is longer. Mr., Mrs., Ms.,
+// Dr. and St. do not end the sentence. A closing quote or bracket straight
+// after the mark is kept.
 const NARRATION_EXCERPT_MAX = 200;
 const JSON_BLOCK = /```json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```/i;
-const FIRST_SENTENCE = /^[\s\S]+?[.!?]+(?=(?:["')\]]+)?(?:\s|$))/;
+const FIRST_SENTENCE = /^[\s\S]+?(?:(?:(?<!\b(?:Mr|Mrs|Ms|Dr|St))\.)|[!?])[.!?]*["'\u201C\u201D\u2018\u2019)\]]*(?=\s|$)/;
 
 function narrationExcerpt(content) {
   if (typeof content !== 'string') return null;
@@ -857,4 +859,159 @@ test('call uses prompt.history when it is an array and falls back only when it i
     { role: 'assistant', content: 'SAVED ASSISTANT' },
     { role: 'user', content: 'CURRENT' },
   ]);
+});
+
+function recapFromCutNarrations(narrations) {
+  assert.ok(narrations.length <= 8);
+  const svc = new NarrationService({}, 'key');
+  const session = sessionForTurns(17);
+  for (let index = 0; index < narrations.length; index++) {
+    session.conversation_history[index * 2 + 1].content = narrations[index];
+  }
+  const before = structuredClone(session);
+  const history = svc.historyForPrompt(session);
+  assert.deepStrictEqual(session, before);
+  const recap = recapPart(history[0].content);
+  assertRecapCopiesStateOnly(recap, session);
+  return recap;
+}
+
+function cutNarrationExcerpt(recap, turn) {
+  const prefix = `Turn ${turn} narration: `;
+  const line = recap.split('\n').find((entry) => entry.startsWith(prefix));
+  assert.ok(line, `missing ${prefix}`);
+  return line.slice(prefix.length);
+}
+
+function assertCutExcerpts(recap, cases) {
+  cases.forEach((item, index) => {
+    assert.strictEqual(cutNarrationExcerpt(recap, index + 1), item.excerpt, item.name);
+    assert.strictEqual(recap.includes(`${item.excerpt}...`), false, item.name);
+  });
+}
+
+test('a cut turn narration line does not end at Mr., Mrs., Ms., Dr. or St.', () => {
+  const cases = [
+    {
+      name: 'Mr. at the start',
+      text: 'Mr. Halden waits by the gate. The rain starts.',
+      excerpt: 'Mr. Halden waits by the gate.',
+    },
+    {
+      name: 'Mr. mid-sentence',
+      text: 'She asked Mr. Halden to wait. He did not.',
+      excerpt: 'She asked Mr. Halden to wait.',
+    },
+    {
+      name: 'Mrs. mid-sentence',
+      text: 'Ask Mrs. Hale for the key. She nods.',
+      excerpt: 'Ask Mrs. Hale for the key.',
+    },
+    {
+      name: 'Ms. mid-sentence',
+      text: 'The note is for Ms. Patel alone. She folds it.',
+      excerpt: 'The note is for Ms. Patel alone.',
+    },
+    {
+      name: 'Dr. mid-sentence',
+      text: 'She told Dr. Wren about the fever. He listened.',
+      excerpt: 'She told Dr. Wren about the fever.',
+    },
+    {
+      name: 'St. mid-sentence',
+      text: 'Meet her on King St. before dusk. Bring the herb.',
+      excerpt: 'Meet her on King St. before dusk.',
+    },
+    {
+      name: 'best. is a real sentence end',
+      text: 'That was her best. The rest can wait.',
+      excerpt: 'That was her best.',
+    },
+    {
+      name: 'an exclamation after Mr still ends the sentence',
+      text: 'Go away, Mr! He left.',
+      excerpt: 'Go away, Mr!',
+    },
+  ];
+  assertCutExcerpts(recapFromCutNarrations(cases.map((item) => item.text)), cases);
+
+  const shelf = 'You trace the grain of the shelf '.repeat(12).trimEnd();
+  const sentence = `Mr. ${shelf}.`;
+  assert.ok(sentence.length > 200);
+  const clipped = `${sentence.slice(0, 197)}...`;
+  assert.strictEqual(clipped.length, 200);
+  const recap = recapFromCutNarrations([`${sentence} Then night falls.`]);
+  assert.strictEqual(cutNarrationExcerpt(recap, 1), clipped);
+  assert.strictEqual(recap.includes(sentence), false);
+  assert.strictEqual(recap.includes('Then night falls'), false);
+});
+
+test('a cut turn narration line keeps a closing quote or bracket after the sentence mark', () => {
+  const cases = [
+    {
+      name: 'straight double quote after the full stop',
+      text: 'She replies, "Not today." The door stays shut.',
+      excerpt: 'She replies, "Not today."',
+    },
+    {
+      name: 'straight double quote at the end of the line',
+      text: 'She replies, "Not today."',
+      excerpt: 'She replies, "Not today."',
+    },
+    {
+      name: 'straight single quote after the full stop',
+      text: "She replies, 'Not today.' She turns away.",
+      excerpt: "She replies, 'Not today.'",
+    },
+    {
+      name: 'curly double quotes after the full stop',
+      text: 'She replies, \u201CNot today.\u201D The latch clicks.',
+      excerpt: 'She replies, \u201CNot today.\u201D',
+    },
+    {
+      name: 'curly single quotes after the full stop',
+      text: 'She replies, \u2018Not today.\u2019 The curtain falls.',
+      excerpt: 'She replies, \u2018Not today.\u2019',
+    },
+    {
+      name: 'closing parenthesis after the full stop',
+      text: 'He stopped (at last.) She looked up.',
+      excerpt: 'He stopped (at last.)',
+    },
+    {
+      name: 'closing bracket after the full stop',
+      text: 'He stopped [at last.] The lamp gutters.',
+      excerpt: 'He stopped [at last.]',
+    },
+    {
+      name: 'title and closing quote',
+      text: 'She called, "Mr. Halden." He turned.',
+      excerpt: 'She called, "Mr. Halden."',
+    },
+  ];
+  assertCutExcerpts(recapFromCutNarrations(cases.map((item) => item.text)), cases);
+
+  const more = [
+    {
+      name: 'straight double quote after a question mark',
+      text: 'He asks, "Are you leaving?" She nods.',
+      excerpt: 'He asks, "Are you leaving?"',
+    },
+    {
+      name: 'straight double quote after an exclamation mark',
+      text: 'She shouts, "Wait!" He stops.',
+      excerpt: 'She shouts, "Wait!"',
+    },
+    {
+      name: 'a quote after a space starts the next sentence',
+      text: 'She leaves. "Not today," he says.',
+      excerpt: 'She leaves.',
+    },
+    {
+      name: 'quote and parenthesis after the full stop',
+      text: 'Done.") The rest waits.',
+      excerpt: 'Done.")',
+    },
+  ];
+  assertCutExcerpts(recapFromCutNarrations(more.map((item) => item.text)), more);
 });
