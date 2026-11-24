@@ -208,6 +208,48 @@ test('createSession: does not mutate the template on disk', async (t) => {
   assert.strictEqual(JSON.parse(raw).session.session_id, null);
 });
 
+test('BUG: createSession ignores the username it is given', async (t) => {
+  const { dir, manager } = await makeManager(t);
+
+  const { session } = await manager.createSession('42', 'dom', 'the-herbalists-choice');
+
+  assert.strictEqual(session.session.reader_name, 'dom');
+  assert.strictEqual(session.reader.name, 'dom');
+
+  const saved = JSON.parse(await fs.readFile(path.join(dir, 'session-42-1.json'), 'utf8'));
+  assert.strictEqual(saved.session.reader_name, 'dom');
+  assert.strictEqual(saved.reader.name, 'dom');
+});
+
+test('createSession: a blank username keeps Wren on both fields', async (t) => {
+  const { dir, manager } = await makeManager(t);
+
+  const empty = await manager.createSession('42', '', 'the-herbalists-choice');
+  assert.strictEqual(empty.session.session.reader_name, 'Wren');
+  assert.strictEqual(empty.session.reader.name, 'Wren');
+
+  const spaces = await manager.createSession('42', '  ', 'the-herbalists-choice');
+  assert.strictEqual(spaces.session.session.reader_name, 'Wren');
+  assert.strictEqual(spaces.session.reader.name, 'Wren');
+
+  const savedEmpty = JSON.parse(await fs.readFile(path.join(dir, 'session-42-1.json'), 'utf8'));
+  const savedSpaces = JSON.parse(await fs.readFile(path.join(dir, 'session-42-2.json'), 'utf8'));
+  assert.strictEqual(savedEmpty.session.reader_name, 'Wren');
+  assert.strictEqual(savedEmpty.reader.name, 'Wren');
+  assert.strictEqual(savedSpaces.session.reader_name, 'Wren');
+  assert.strictEqual(savedSpaces.reader.name, 'Wren');
+});
+
+test('createSession: leaves the shipped template file unchanged', async (t) => {
+  const { manager } = await makeManager(t);
+  const templatePath = path.join(__dirname, '..', 'sessions', 'session-template.json');
+  const before = await fs.readFile(templatePath);
+
+  await manager.createSession('42', 'dom', 'the-herbalists-choice');
+
+  assert.deepStrictEqual(await fs.readFile(templatePath), before);
+});
+
 // --- saveSession / deleteSession ---------------------------------------------
 
 test('saveSession: round-trips state through disk', async (t) => {
@@ -603,16 +645,4 @@ test('withUserLock: a later call queues normally once a nested call has finished
   await Promise.all([first, second]);
 
   assert.deepStrictEqual(events, ['nested', 'first end', 'second']);
-});
-
-// --- Known defects -----------------------------------------------------------
-
-test('BUG: createSession ignores the username it is given', { todo: true }, async (t) => {
-  // `username` is accepted but never stored, so the narrator cannot address the
-  // reader by name and the template's hardcoded "Wren" is always used.
-  const { manager } = await makeManager(t);
-
-  const { session } = await manager.createSession('42', 'dom', 'the-herbalists-choice');
-
-  assert.strictEqual(session.session.reader_name, 'dom');
 });
