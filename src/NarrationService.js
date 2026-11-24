@@ -23,6 +23,14 @@ const PROMPT_HISTORY_STEP = 8;
 const RECAP_LABEL = 'Recap of earlier turns, not a new reader action.';
 const RECAP_STATE_LINE = 'Current flags, plot beats and secrets are in the Current Session State below.';
 
+// A flag that is absent or undefined counts as false, so an old save that
+// never stored the key still meets a condition expecting false. A condition
+// expecting true still fails when the key is missing.
+function flagMatches(flags, name, expected) {
+  if (!flags || flags[name] === undefined) return expected === false;
+  return flags[name] === expected;
+}
+
 const PROVIDERS = {
   kimi: KimiClient,
 };
@@ -131,31 +139,41 @@ class NarrationService {
     return { ...state, session: meta };
   }
 
+  // all_required must all match. hold_while, when present, is a list of
+  // groups in the same shape. If every condition in any group matches, the
+  // story is not over yet. A config with no hold_while ends as before.
   evaluateEndConditions(session, config) {
     if (!config || !config.end_conditions || !config.end_conditions.all_required) {
       return false;
     }
-    return config.end_conditions.all_required.every(cond => {
+    const met = (cond) => {
       if (cond.flag) {
-        return session.story.flags[cond.flag] === cond.value;
+        return flagMatches(session.story.flags, cond.flag, cond.value);
       }
       if (cond.character) {
         return session.characters[cond.character] &&
           session.characters[cond.character][cond.field] === cond.value;
       }
       return false;
-    });
+    };
+    if (!config.end_conditions.all_required.every(met)) return false;
+    const holdWhile = config.end_conditions.hold_while;
+    if (Array.isArray(holdWhile) && holdWhile.some(group => Array.isArray(group) && group.length > 0 && group.every(met))) {
+      return false;
+    }
+    return true;
   }
 
   // Every variant whose conditions all match, in config order. The same rule
   // as the playthrough tests: a variant matches only when every condition's
-  // flag has the required value. There is no precedence list.
+  // flag has the required value. A missing flag counts as false. There is no
+  // precedence list.
   matchEndingVariants(session, config) {
     const variants = config && Array.isArray(config.ending_variants) ? config.ending_variants : [];
     const flags = session && session.story && session.story.flags ? session.story.flags : {};
     return variants
       .filter(variant => variant && Array.isArray(variant.conditions)
-        && variant.conditions.every(cond => flags[cond.flag] === cond.value))
+        && variant.conditions.every(cond => flagMatches(flags, cond.flag, cond.value)))
       .map(variant => variant.id);
   }
 

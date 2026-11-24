@@ -106,6 +106,7 @@
       "reader_left_apothecary": false,
       "tomas_involved": false,
       "halden_encountered": false,
+      "halden_agreed_to_help": false,
       "corwin_encountered": false,
       "forest_entered": false,
       "moonpetal_obtained": false,

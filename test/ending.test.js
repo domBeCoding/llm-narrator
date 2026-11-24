@@ -56,6 +56,7 @@ The end conditions have all been met. This is the **final turn** of the story. T
           id: 'halden_turned_away',
           conditions: [
             { flag: 'halden_encountered', value: true },
+            { flag: 'halden_agreed_to_help', value: false },
             { flag: 'halden_reconciled', value: false },
             { flag: 'tomas_involved', value: false },
             { flag: 'corwin_involvement', value: false },
@@ -175,6 +176,108 @@ test('evaluateEndConditions: returns false when config has no end_conditions', (
   assert.strictEqual(svc.evaluateEndConditions(session, null), false);
   assert.strictEqual(svc.evaluateEndConditions(session, {}), false);
   assert.strictEqual(svc.evaluateEndConditions(session, { end_conditions: {} }), false);
+});
+
+function withRecovery(flags) {
+  const session = makeSession();
+  session.story.flags.moonpetal_obtained = true;
+  session.characters.elara.health = 'recovering';
+  Object.assign(session.story.flags, flags);
+  return session;
+}
+
+test('evaluateEndConditions: holds while Halden agreed to help and the reunion has not happened', () => {
+  const svc = makeService();
+  const real = require('../stories/the-herbalists-choice-config.json');
+
+  assert.strictEqual(
+    svc.evaluateEndConditions(withRecovery({ halden_agreed_to_help: true, halden_reconciled: false }), real),
+    false,
+  );
+  assert.strictEqual(
+    svc.evaluateEndConditions(withRecovery({ halden_agreed_to_help: true, halden_reconciled: true }), real),
+    true,
+  );
+  assert.strictEqual(
+    svc.evaluateEndConditions(withRecovery({ halden_agreed_to_help: false, halden_reconciled: false }), real),
+    true,
+  );
+});
+
+test('evaluateEndConditions: a stub config with no hold_while is unchanged', () => {
+  const svc = makeService();
+  const { config } = storyManagerStub.getStory();
+  assert.strictEqual(config.end_conditions.hold_while, undefined);
+
+  assert.strictEqual(
+    svc.evaluateEndConditions(withRecovery({ halden_agreed_to_help: true, halden_reconciled: false }), config),
+    true,
+  );
+});
+
+test('matchEndingVariants: agreed but not reconciled matches neither Halden ending', () => {
+  const svc = makeService();
+  const real = require('../stories/the-herbalists-choice-config.json');
+  const session = makeSession();
+  Object.assign(session.story.flags, {
+    halden_encountered: true,
+    halden_agreed_to_help: true,
+    halden_reconciled: false,
+    tomas_involved: false,
+    corwin_involvement: false,
+  });
+
+  const matched = svc.matchEndingVariants(session, real);
+  assert.ok(!matched.includes('halden_turned_away'));
+  assert.ok(!matched.includes('halden_reconciled'));
+});
+
+test('matchEndingVariants: turned away, with no Tomas or Corwin, matches only halden_turned_away', () => {
+  const svc = makeService();
+  const real = require('../stories/the-herbalists-choice-config.json');
+  const session = makeSession();
+  Object.assign(session.story.flags, {
+    halden_encountered: true,
+    halden_agreed_to_help: false,
+    halden_reconciled: false,
+    tomas_involved: false,
+    corwin_involvement: false,
+  });
+
+  assert.deepStrictEqual(svc.matchEndingVariants(session, real), ['halden_turned_away']);
+});
+
+test('matchEndingVariants: a missing halden_agreed_to_help counts as false and matches halden_turned_away', () => {
+  const svc = makeService();
+  const real = require('../stories/the-herbalists-choice-config.json');
+
+  function turnedAway(extra) {
+    const session = makeSession();
+    Object.assign(session.story.flags, {
+      moonpetal_obtained: true,
+      halden_encountered: true,
+      halden_reconciled: false,
+      tomas_involved: false,
+      corwin_involvement: false,
+    }, extra);
+    session.characters.elara.health = 'recovering';
+    return session;
+  }
+
+  const missing = turnedAway();
+  delete missing.story.flags.halden_agreed_to_help;
+  assert.strictEqual('halden_agreed_to_help' in missing.story.flags, false);
+  assert.deepStrictEqual(svc.matchEndingVariants(missing, real), ['halden_turned_away']);
+  assert.strictEqual(svc.evaluateEndConditions(missing, real), true, 'the hold does not apply when the key is absent');
+  svc.recordEnding(missing, real);
+  assert.deepStrictEqual(missing.session.ending_variant, ['halden_turned_away']);
+
+  const unset = turnedAway({ halden_agreed_to_help: undefined });
+  assert.deepStrictEqual(svc.matchEndingVariants(unset, real), ['halden_turned_away']);
+
+  assert.strictEqual(svc.evaluateEndConditions(missing, {
+    end_conditions: { all_required: [{ flag: 'halden_agreed_to_help', value: true }] },
+  }), false, 'a missing flag still fails a condition that expects true');
 });
 
 // --- buildPrompt concluding directive ---------------------------------------
@@ -373,14 +476,18 @@ test('prompts: the model is not asked to infer or select the ending', () => {
   assert.doesNotMatch(system, /It does not say which ending variant applies/);
   assert.doesNotMatch(system, /Select the variant/);
   assert.doesNotMatch(system, /to select the appropriate ending variant/);
-  assert.match(system, /do not use `halden_turned_away`/);
-  assert.match(system, /write the reunion of Halden and Elara into the closing scene instead/);
+  assert.match(system, /set `halden_agreed_to_help` true in the same reply/);
+  assert.match(system, /if she turns the reader away, leave it false/);
+  assert.doesNotMatch(system, /do not use `halden_turned_away`/);
+  assert.doesNotMatch(system, /write the reunion of Halden and Elara into the closing scene instead/);
 });
 
 test('stub config: end conditions and ending rules match the shipped story config', () => {
   const real = require('../stories/the-herbalists-choice-config.json');
   const { config } = storyManagerStub.getStory();
-  assert.deepStrictEqual(config.end_conditions, real.end_conditions);
+  assert.deepStrictEqual(config.end_conditions.all_required, real.end_conditions.all_required);
+  assert.strictEqual(config.end_conditions.hold_while, undefined);
+  assert.ok(Array.isArray(real.end_conditions.hold_while));
   const rules = variants => variants.map(({ id, conditions }) => ({ id, conditions }));
   assert.deepStrictEqual(rules(config.ending_variants), rules(real.ending_variants));
 });

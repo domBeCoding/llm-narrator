@@ -195,7 +195,11 @@ test('the shipped story config is internally consistent', async () => {
   const { config } = manager.getStory('the-herbalists-choice');
 
   // Every flag referenced by an end condition must exist in the flag registry.
-  for (const cond of config.end_conditions.all_required) {
+  const endConditions = [
+    ...config.end_conditions.all_required,
+    ...(config.end_conditions.hold_while || []).flat(),
+  ];
+  for (const cond of endConditions) {
     if (cond.flag) {
       assert.ok(cond.flag in config.flags, `end condition flag "${cond.flag}" is not declared`);
     }

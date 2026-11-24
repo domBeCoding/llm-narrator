@@ -22,6 +22,7 @@
     "reader_left_apothecary": false,
     "tomas_involved": false,
     "halden_encountered": false,
+    "halden_agreed_to_help": false,
     "corwin_encountered": false,
     "forest_entered": false,
     "moonpetal_obtained": false,
@@ -81,6 +82,12 @@
     "all_required": [
       {"flag": "moonpetal_obtained", "value": true},
       {"character": "elara", "field": "health", "value": "recovering"}
+    ],
+    "hold_while": [
+      [
+        {"flag": "halden_agreed_to_help", "value": true},
+        {"flag": "halden_reconciled", "value": false}
+      ]
     ]
   },
 
@@ -119,6 +126,7 @@
       "id": "halden_turned_away",
       "conditions": [
         {"flag": "halden_encountered", "value": true},
+        {"flag": "halden_agreed_to_help", "value": false},
         {"flag": "halden_reconciled", "value": false},
         {"flag": "tomas_involved", "value": false},
         {"flag": "corwin_involvement", "value": false}
