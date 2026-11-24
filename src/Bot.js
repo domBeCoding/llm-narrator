@@ -272,7 +272,12 @@ class Bot {
       await this.sessionManager.withUserLock(user.id, async () => {
         let session, sessionNumber;
         try {
-          ({ session, sessionNumber } = await this.sessionManager.createSession(user.id, user.username, storyId));
+          // Server nickname first, then the Discord display name, then the
+          // handle. Direct messages have no member.
+          const readerName = (interaction.member && interaction.member.displayName)
+            || user.globalName
+            || user.username;
+          ({ session, sessionNumber } = await this.sessionManager.createSession(user.id, readerName, storyId));
         } finally {
           this.markNewGamePending(user.id, -1);
         }
