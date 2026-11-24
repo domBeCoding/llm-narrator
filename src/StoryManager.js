@@ -62,9 +62,10 @@ class StoryManager {
   }
 
   // Preamble (title, world, characters, story structure heading) plus the
-  // requested act. Later acts, and anything after the last act, are left out.
-  // A missing act number, or a heading that is not in the file, falls back to
-  // the full story and logs a warning.
+  // requested act, then any trailing notes after the last act. Later acts are
+  // left out. A missing act number, or a heading that is not in the file,
+  // falls back to the full story and logs a warning. The notes are already in
+  // that full file, so they are not appended again.
   getStoryContentForAct(storyId, actNumber) {
     const story = this.getStory(storyId);
     if (!story) {
@@ -100,18 +101,27 @@ function storyContentForAct(content, actNumber) {
 
   const preamble = content.slice(0, headings[0].index);
   const start = headings[found].index;
+  const notesAt = topLevelHeadingAfter(content, headings[headings.length - 1].index);
   let end;
   if (found + 1 < headings.length) {
     end = headings[found + 1].index;
   } else {
-    // The last act runs up to the next top-level `## ` heading, so the state
-    // tracking reference and author notes stay out of the prompt.
-    const topLevel = /^## /gm;
-    topLevel.lastIndex = start;
-    const next = topLevel.exec(content);
-    end = next ? next.index : content.length;
+    // The last act still stops at the next top-level `## ` heading. Trailing
+    // notes, when the story has them, are appended below for every act.
+    end = notesAt === -1 ? content.length : notesAt;
   }
-  return preamble + content.slice(start, end);
+  const actText = preamble + content.slice(start, end);
+  if (notesAt === -1) return actText;
+  return actText + content.slice(notesAt);
+}
+
+// Index of the first top-level `## ` heading after `fromIndex`, or -1 when
+// the story has no trailing notes. `### Act` headings do not match.
+function topLevelHeadingAfter(content, fromIndex) {
+  const topLevel = /^## /gm;
+  topLevel.lastIndex = fromIndex;
+  const next = topLevel.exec(content);
+  return next ? next.index : -1;
 }
 
 module.exports = StoryManager;

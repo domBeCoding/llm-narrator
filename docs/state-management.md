@@ -239,46 +239,46 @@ conversation_history: [] # array of {role, content} pairs — reader actions and
 The application layer (the Discord bot) owns state; the LLM only narrates and reports changes.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  TURN CYCLE                                             │
-│                                                         │
-│  1. Reader submits action                               │
-│                                                         │
-│  2. Bot loads the session state file                    │
-│                                                         │
-│  3. Bot builds the prompt:                              │
-│     - System prompt and full story config               │
-│     - Story text: preamble and current act              │
-│     - Earlier turns, compacted (see below)              │
-│     - Session state, saved history omitted              │
-│     - Reader action, plus minutes since last            │
-│                                                         │
-│  4. LLM returns narration + a fenced JSON state block   │
-│                                                         │
-│  5. Bot parses the narration and the state block         │
-│                                                         │
-│  6. Bot validates each change against the story config   │
-│     (src/StateValidator.js), drops and logs invalid ones │
-│                                                         │
-│  7. Bot applies the valid changes and records            │
-│     last_action_at. On a story turn (a reply with a      │
-│     state block) it also adds one to turn_count and      │
-│     sets last_llm_output. Clarification, healthcheck     │
-│     and resume replies leave both alone.                 │
-│                                                         │
-│  8. Bot saves the session file                          │
-│                                                         │
-│  9. Bot sends the narration to the reader               │
-│                                                         │
-│  10. Repeat                                             │
-└─────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│  TURN CYCLE                                                            │
+│                                                                        │
+│  1. Reader submits action                                              │
+│                                                                        │
+│  2. Bot loads the session state file                                   │
+│                                                                        │
+│  3. Bot builds the prompt:                                             │
+│     - System prompt and full story config                              │
+│     - Story text: preamble, current act, state tables and author notes │
+│     - Earlier turns, compacted (see below)                             │
+│     - Session state, saved history omitted                             │
+│     - Reader action, plus minutes since last                           │
+│                                                                        │
+│  4. LLM returns narration + a fenced JSON state block                  │
+│                                                                        │
+│  5. Bot parses the narration and the state block                       │
+│                                                                        │
+│  6. Bot validates each change against the story config                 │
+│     (src/StateValidator.js), drops and logs invalid ones               │
+│                                                                        │
+│  7. Bot applies the valid changes and records                          │
+│     last_action_at. On a story turn (a reply with a                    │
+│     state block) it also adds one to turn_count and                    │
+│     sets last_llm_output. Clarification, healthcheck                   │
+│     and resume replies leave both alone.                               │
+│                                                                        │
+│  8. Bot saves the session file                                         │
+│                                                                        │
+│  9. Bot sends the narration to the reader                              │
+│                                                                        │
+│  10. Repeat                                                            │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 A history of 16 turns or fewer is sent whole. A turn is one reader message and the assistant reply after it. Above that, the first `floor((turns - 8) / 8) * 8` turns are cut and 8 to 15 recent turns are sent. The cut turns go into one recap. That recap is merged into the first kept reader message. If the first kept message is from the assistant, the recap stays its own reader message in front of it, so two reader messages are not sent in a row. A message that is not part of a reader-and-reply pair is not a turn and stays where it is. The recap lists the choice lines for the cut turns, plus any choice with no turn number, then points at the current session state. The saved `conversation_history` is left untouched.
 
 The session state in the final user message leaves out `conversation_history` and `session.last_llm_output`, which repeats the last narration. Both are still saved in the session file, and the `get_last_narration` tool reads `last_llm_output` from there. `choice_history` in this prompt copy is capped at the last 8 entries. The save keeps all of it.
 
-The story text in the system context is the preamble plus the current act. Later acts, and the notes after the last act, are left out. If the current act is missing or has no matching heading, the full story file is sent and a warning is logged. The system context also carries the narrator line, the full system prompt and the whole story config. The reader action carries `Minutes since the last action: N` when the previous action time is valid. N is whole minutes, and a clock time in the future counts as 0. A missing or invalid time leaves the line out.
+The story text in the system context is the preamble plus the current act. Later acts are left out, but the trailing state tables and author notes are still sent. If the current act is missing or has no matching heading, the full story file is sent and a warning is logged. The system context also carries the narrator line, the full system prompt and the whole story config. The reader action carries `Minutes since the last action: N` when the previous action time is valid. N is whole minutes, and a clock time in the future counts as 0. A missing or invalid time leaves the line out.
 
 ### Session Status Lifecycle
 

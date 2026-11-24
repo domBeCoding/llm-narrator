@@ -257,7 +257,7 @@ async function loadHerbalist() {
   return manager;
 }
 
-test('getStoryContentForAct: act 1 includes the apothecary scene and excludes later acts and notes', async () => {
+test('getStoryContentForAct: act 1 includes the apothecary scene and the trailing notes, and leaves out later acts', async () => {
   const manager = await loadHerbalist();
   const text = manager.getStoryContentForAct('the-herbalists-choice', 1);
 
@@ -267,11 +267,10 @@ test('getStoryContentForAct: act 1 includes the apothecary scene and excludes la
   assert.match(text, /Scene 1: Morning in the Apothecary/);
   assert.doesNotMatch(text, /Scene 2: The Crossroads/);
   assert.doesNotMatch(text, /Scene 3: The Moonpetal/);
-  assert.doesNotMatch(text, /## State Tracking Reference/);
-  assert.doesNotMatch(text, /## Author Notes/);
+  assertNotesOnce(text);
 });
 
-test('getStoryContentForAct: act 2 includes the crossroads and the preamble, and excludes later material', async () => {
+test('getStoryContentForAct: act 2 includes the crossroads, the preamble and the trailing notes, and leaves out other acts', async () => {
   const manager = await loadHerbalist();
   const text = manager.getStoryContentForAct('the-herbalists-choice', 2);
 
@@ -280,11 +279,10 @@ test('getStoryContentForAct: act 2 includes the crossroads and the preamble, and
   assert.match(text, /Scene 2: The Crossroads/);
   assert.doesNotMatch(text, /Scene 1: Morning in the Apothecary/);
   assert.doesNotMatch(text, /Scene 3: The Moonpetal/);
-  assert.doesNotMatch(text, /## Author Notes/);
-  assert.doesNotMatch(text, /## State Tracking Reference/);
+  assertNotesOnce(text);
 });
 
-test('getStoryContentForAct: act 3 includes the moonpetal and the preamble, and excludes the notes', async () => {
+test('getStoryContentForAct: act 3 includes the moonpetal, the preamble and the trailing notes, and leaves out the crossroads', async () => {
   const manager = await loadHerbalist();
   const text = manager.getStoryContentForAct('the-herbalists-choice', 3);
 
@@ -293,8 +291,7 @@ test('getStoryContentForAct: act 3 includes the moonpetal and the preamble, and 
   assert.match(text, /Scene 3: The Moonpetal/);
   assert.doesNotMatch(text, /Scene 1: Morning in the Apothecary/);
   assert.doesNotMatch(text, /Scene 2: The Crossroads/);
-  assert.doesNotMatch(text, /## Author Notes/);
-  assert.doesNotMatch(text, /## State Tracking Reference/);
+  assertNotesOnce(text);
 });
 
 test('getStoryContentForAct: a missing or unknown current_act returns the full file and logs a warning', async (t) => {
@@ -309,13 +306,75 @@ test('getStoryContentForAct: a missing or unknown current_act returns the full f
   const missing = manager.getStoryContentForAct('the-herbalists-choice', undefined);
   assert.strictEqual(missing, full);
   assert.match(missing, /Scene 3: The Moonpetal/);
-  assert.match(missing, /## Author Notes/);
+  assert.strictEqual(occurrences(missing, '## State Tracking Reference'), 1);
+  assert.strictEqual(occurrences(missing, '## Author Notes'), 1);
   assert.ok(warnings.some(line => /current_act=missing/.test(line) && /full story/.test(line)));
 
   warnings.length = 0;
   const unknown = manager.getStoryContentForAct('the-herbalists-choice', 9);
   assert.strictEqual(unknown, full);
   assert.match(unknown, /Scene 2: The Crossroads/);
-  assert.match(unknown, /## Author Notes/);
+  assert.strictEqual(occurrences(unknown, '## State Tracking Reference'), 1);
+  assert.strictEqual(occurrences(unknown, '## Author Notes'), 1);
   assert.ok(warnings.some(line => /current_act=9/.test(line) && /full story/.test(line)));
 });
+
+test('getStoryContentForAct: a story with no trailing sections is unchanged', async (t) => {
+  const { storiesDir, promptsDir } = await makeDirs(t);
+  await writePromptFiles(promptsDir);
+  const content = [
+    '# Plain Tale',
+    '',
+    '## World',
+    '',
+    'A quiet village.',
+    '',
+    '## Story Structure',
+    '',
+    '### Act 1 — Opening',
+    '',
+    'Scene 1: The Door',
+    '',
+    '### Act 2 — Later',
+    '',
+    'Scene 2: The Road',
+    '',
+  ].join('\n');
+  await writeStory(storiesDir, 'plain-tale', {}, content);
+
+  const manager = new StoryManager(storiesDir, promptsDir);
+  await manager.loadStoryData();
+
+  const act1At = content.indexOf('### Act 1');
+  const act2At = content.indexOf('### Act 2');
+  const preamble = content.slice(0, act1At);
+  const act1 = manager.getStoryContentForAct('plain-tale', 1);
+  const act2 = manager.getStoryContentForAct('plain-tale', 2);
+
+  assert.strictEqual(act1, preamble + content.slice(act1At, act2At));
+  assert.strictEqual(act2, preamble + content.slice(act2At));
+  assert.match(act1, /Scene 1: The Door/);
+  assert.doesNotMatch(act1, /Scene 2: The Road/);
+  assert.match(act2, /A quiet village\./);
+  assert.match(act2, /Scene 2: The Road/);
+  assert.doesNotMatch(act2, /Scene 1: The Door/);
+});
+
+function occurrences(text, needle) {
+  let count = 0;
+  let from = 0;
+  while (from <= text.length) {
+    const at = text.indexOf(needle, from);
+    if (at === -1) return count;
+    count += 1;
+    from = at + needle.length;
+  }
+  return count;
+}
+
+function assertNotesOnce(text) {
+  assert.strictEqual(occurrences(text, '## State Tracking Reference'), 1);
+  assert.strictEqual(occurrences(text, '## Author Notes'), 1);
+  assert.match(text, /are not mutually exclusive/);
+  assert.match(text, /always available as someone the reader can talk to/);
+}

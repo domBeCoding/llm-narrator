@@ -138,20 +138,35 @@ test('buildPrompt: uses session.story.current_act when building systemContext', 
   assert.match(act1, /Scene 1: Morning in the Apothecary/);
   assert.doesNotMatch(act1, /Scene 2: The Crossroads/);
   assert.doesNotMatch(act1, /Scene 3: The Moonpetal/);
-  assert.doesNotMatch(act1, /## Author Notes/);
+  assert.strictEqual(occurrences(act1, '## State Tracking Reference'), 1);
+  assert.strictEqual(occurrences(act1, '## Author Notes'), 1);
 
   session.story.current_act = 3;
   const act3 = service.buildPrompt(session, 'I look around').systemContext;
   assert.match(act3, /Scene 3: The Moonpetal/);
   assert.match(act3, /# The Herbalist's Choice/);
-  assert.doesNotMatch(act3, /## State Tracking Reference/);
-  assert.doesNotMatch(act3, /## Author Notes/);
+  assert.doesNotMatch(act3, /Scene 1: Morning in the Apothecary/);
+  assert.doesNotMatch(act3, /Scene 2: The Crossroads/);
+  assert.strictEqual(occurrences(act3, '## State Tracking Reference'), 1);
+  assert.strictEqual(occurrences(act3, '## Author Notes'), 1);
 
   assert.deepStrictEqual(seen, [
     { storyId: 'the-herbalists-choice', actNumber: 1 },
     { storyId: 'the-herbalists-choice', actNumber: 3 },
   ]);
 });
+
+function occurrences(text, needle) {
+  let count = 0;
+  let from = 0;
+  while (from <= text.length) {
+    const at = text.indexOf(needle, from);
+    if (at === -1) return count;
+    count += 1;
+    from = at + needle.length;
+  }
+  return count;
+}
 
 function sectionAfter(text, heading, until) {
   const start = text.indexOf(heading);

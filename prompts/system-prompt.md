@@ -78,7 +78,7 @@ At the start of each turn, you will receive:
    - **World state**: location statuses, visited tracking, village awareness, weather, ambient events
    - **Choice history**: log of every reader action and its consequences so far
 
-4. **Current Act Information** — the structure, scenes, available actions, and key beats for the act the reader is currently in. You are given the setting, characters and the current act only, to avoid revealing upcoming plot developments prematurely.
+4. **Current Act Information** — the structure, scenes, available actions, and key beats for the act the reader is currently in. You are given the setting, the characters, the current act, and the state tables and author notes. Later acts are not included, to avoid revealing upcoming plot developments prematurely.
 
 5. **Conversation History** — the full exchange of narration and reader actions so far in this session.
 
