@@ -103,11 +103,11 @@ function messagesFor(count) {
 // Mirrors NarrationService: drop a fenced JSON state block and the same
 // bracket markers, then take the first sentence, trimmed, clipped at 200
 // characters with `...` when the sentence itself is longer. Mr., Mrs., Ms.,
-// Dr. and St. do not end the sentence. A closing quote or bracket straight
-// after the mark is kept.
+// Dr. and St. do not end the sentence, in any letter case, and only as whole
+// words. A closing quote or bracket straight after the mark is kept.
 const NARRATION_EXCERPT_MAX = 200;
 const JSON_BLOCK = /```json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```/i;
-const FIRST_SENTENCE = /^[\s\S]+?(?:(?:(?<!\b(?:Mr|Mrs|Ms|Dr|St))\.)|[!?])[.!?]*["'\u201C\u201D\u2018\u2019)\]]*(?=\s|$)/;
+const FIRST_SENTENCE = /^[\s\S]+?(?:(?:(?<!\b(?:Mr|Mrs|Ms|Dr|St))\.)|[!?])[.!?]*["'\u201C\u201D\u2018\u2019)\]]*(?=\s|$)/i;
 
 function narrationExcerpt(content) {
   if (typeof content !== 'string') return null;
@@ -1014,4 +1014,123 @@ test('a cut turn narration line keeps a closing quote or bracket after the sente
     },
   ];
   assertCutExcerpts(recapFromCutNarrations(more.map((item) => item.text)), more);
+});
+
+function excerptsFromCutNarrations(texts) {
+  assert.ok(texts.length >= 1 && texts.length <= 8);
+  const svc = new NarrationService({}, 'key');
+  const session = sessionForTurns(17);
+  texts.forEach((text, index) => {
+    session.conversation_history[index * 2 + 1].content = text;
+  });
+  const before = structuredClone(session);
+  const history = svc.historyForPrompt(session);
+  assert.deepStrictEqual(session, before);
+  const recap = recapPart(history[0].content);
+  return texts.map((_, index) => cutNarrationExcerpt(recap, index + 1));
+}
+
+test('a cut turn narration line does not end at a title in any case', () => {
+  const cases = [
+    {
+      name: 'MR. in capitals',
+      text: 'MR. Halden waits by the gate. The rain starts.',
+      excerpt: 'MR. Halden waits by the gate.',
+    },
+    {
+      name: 'MRS. in capitals',
+      text: 'Ask MRS. Hale for the key. She nods.',
+      excerpt: 'Ask MRS. Hale for the key.',
+    },
+    {
+      name: 'MS. in capitals',
+      text: 'The note is for MS. Patel alone. She folds it.',
+      excerpt: 'The note is for MS. Patel alone.',
+    },
+    {
+      name: 'DR. in capitals',
+      text: 'She told DR. Wren about the fever. He listened.',
+      excerpt: 'She told DR. Wren about the fever.',
+    },
+    {
+      name: 'ST. in capitals',
+      text: 'Meet her on King ST. before dusk. Bring the herb.',
+      excerpt: 'Meet her on King ST. before dusk.',
+    },
+    {
+      name: 'mr. in lower case',
+      text: 'mr. Halden waits by the gate. The rain starts.',
+      excerpt: 'mr. Halden waits by the gate.',
+    },
+    {
+      name: 'mrs. in lower case',
+      text: 'Ask mrs. Hale for the key. She nods.',
+      excerpt: 'Ask mrs. Hale for the key.',
+    },
+    {
+      name: 'ms. in lower case',
+      text: 'The note is for ms. Patel alone. She folds it.',
+      excerpt: 'The note is for ms. Patel alone.',
+    },
+  ];
+  const first = excerptsFromCutNarrations(cases.map((item) => item.text));
+  cases.forEach((item, index) => {
+    assert.strictEqual(first[index], item.excerpt, item.name);
+  });
+
+  const rest = [
+    {
+      name: 'dr. in lower case',
+      text: 'She told dr. Wren about the fever. He listened.',
+      excerpt: 'She told dr. Wren about the fever.',
+    },
+    {
+      name: 'st. in lower case',
+      text: 'Meet her on King st. before dusk. Bring the herb.',
+      excerpt: 'Meet her on King st. before dusk.',
+    },
+  ];
+  const second = excerptsFromCutNarrations(rest.map((item) => item.text));
+  rest.forEach((item, index) => {
+    assert.strictEqual(second[index], item.excerpt, item.name);
+  });
+});
+
+test('a cut turn narration line still ends at a word that only ends like a title', () => {
+  const cases = [
+    {
+      name: 'Amr. still ends the sentence',
+      text: 'She met Amr. Then she left.',
+      excerpt: 'She met Amr.',
+    },
+    {
+      name: 'first. still ends the sentence',
+      text: 'That was her first. The rest can wait.',
+      excerpt: 'That was her first.',
+    },
+    {
+      name: 'AMR. still ends the sentence',
+      text: 'She met AMR. Then she left.',
+      excerpt: 'She met AMR.',
+    },
+    {
+      name: 'FIRST. still ends the sentence',
+      text: 'That was her FIRST. The rest can wait.',
+      excerpt: 'That was her FIRST.',
+    },
+    {
+      name: 'alms. still ends the sentence',
+      text: 'He counted the alms. Then he left.',
+      excerpt: 'He counted the alms.',
+    },
+    {
+      name: 'Baldr. still ends the sentence',
+      text: 'She saw Baldr. He waved.',
+      excerpt: 'She saw Baldr.',
+    },
+  ];
+  const excerpts = excerptsFromCutNarrations(cases.map((item) => item.text));
+  cases.forEach((item, index) => {
+    assert.strictEqual(excerpts[index], item.excerpt, item.name);
+  });
 });
