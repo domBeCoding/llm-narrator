@@ -173,6 +173,16 @@ class SessionManager {
     session.session.started_at = new Date().toISOString();
     session.session.last_action_at = new Date().toISOString();
 
+    // A new session takes the given name only when it is a non-blank string.
+    // Missing, non-string, and blank values keep both template names.
+    if (typeof username === 'string') {
+      const name = username.trim();
+      if (name) {
+        session.session.reader_name = name;
+        session.reader.name = name;
+      }
+    }
+
     await this.saveSession(userId, sessionNumber, session);
     await this.setActiveSession(userId, sessionNumber);
 
