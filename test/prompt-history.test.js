@@ -102,9 +102,11 @@ function messagesFor(count) {
 
 // Mirrors NarrationService: drop a fenced JSON state block and the same
 // bracket markers, then take the first sentence, trimmed, clipped at 200
-// characters with `...` when the sentence itself is longer. Mr., Mrs., Ms.,
-// Dr. and St. do not end the sentence, in any letter case, and only as whole
-// words. A closing quote or bracket straight after the mark is kept.
+// characters counted by code point, with `...` when the sentence itself is
+// longer. The ellipsis counts toward the 200, and the cut is not trimmed.
+// Mr., Mrs., Ms., Dr. and St. do not end the sentence, in any letter case,
+// and only as whole words. A closing quote or bracket straight after the
+// mark is kept.
 const NARRATION_EXCERPT_MAX = 200;
 const JSON_BLOCK = /```json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```/i;
 const FIRST_SENTENCE = /^[\s\S]+?(?:(?:(?<!\b(?:Mr|Mrs|Ms|Dr|St))\.)|[!?])[.!?]*["'\u201C\u201D\u2018\u2019)\]]*(?=\s|$)/i;
@@ -119,8 +121,9 @@ function narrationExcerpt(content) {
   const matched = text.match(FIRST_SENTENCE);
   const sentence = (matched ? matched[0] : text).trim();
   if (sentence === '') return null;
-  if (sentence.length <= NARRATION_EXCERPT_MAX) return sentence;
-  return `${sentence.slice(0, NARRATION_EXCERPT_MAX - 3)}...`;
+  const points = Array.from(sentence);
+  if (points.length <= NARRATION_EXCERPT_MAX) return sentence;
+  return `${points.slice(0, NARRATION_EXCERPT_MAX - 3).join('')}...`;
 }
 
 function savedTurnCount(session) {
@@ -1094,6 +1097,43 @@ test('a cut turn narration line does not end at a title in any case', () => {
   rest.forEach((item, index) => {
     assert.strictEqual(second[index], item.excerpt, item.name);
   });
+});
+
+function hasLoneSurrogate(value) {
+  return /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(value);
+}
+
+test('a long sentence with a 31-letter prefix and an emoji is clipped to 197 code points', () => {
+  const emoji = '\u{1F600}';
+  const text = `${'a'.repeat(31)}${emoji}${'b'.repeat(250)}`;
+  assert.strictEqual(Array.from(emoji).length, 1);
+  assert.strictEqual(emoji.length, 2);
+  assert.strictEqual(/[.!?]/.test(text), false);
+  assert.ok(Array.from(text).length > 200);
+
+  const clipped = `${Array.from(text).slice(0, 197).join('')}...`;
+  assert.strictEqual(Array.from(clipped).length, 200);
+  assert.ok(clipped.endsWith('...'));
+  assert.strictEqual(Array.from(clipped)[31], emoji);
+  assert.notStrictEqual(clipped, `${text.slice(0, 197)}...`);
+
+  const excerpt = cutNarrationExcerpt(recapFromCutNarrations([text]), 1);
+  assert.strictEqual(excerpt, clipped);
+  assert.strictEqual(hasLoneSurrogate(excerpt), false);
+});
+
+test('a sentence of exactly 200 code points, including an emoji, is not clipped', () => {
+  const emoji = '\u{1F600}';
+  const sentence = `${'B'.repeat(199)}${emoji}`;
+  assert.strictEqual(Array.from(sentence).length, 200);
+  assert.ok(sentence.length > 200);
+  assert.strictEqual(/[.!?]/.test(sentence), false);
+
+  const excerpt = cutNarrationExcerpt(recapFromCutNarrations([sentence]), 1);
+  assert.strictEqual(excerpt, sentence);
+  assert.strictEqual(excerpt.endsWith('...'), false);
+  assert.strictEqual(excerpt.includes(emoji), true);
+  assert.strictEqual(hasLoneSurrogate(excerpt), false);
 });
 
 test('a cut turn narration line still ends at a word that only ends like a title', () => {
