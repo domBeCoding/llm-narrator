@@ -114,8 +114,20 @@ function assertCurrentAct(systemContext, act, label) {
   for (const scene of absent[act]) {
     assert.strictEqual(systemContext.includes(scene), false, `${label} includes ${scene}`);
   }
-  assert.strictEqual(systemContext.includes('## Author Notes'), false, label);
-  assert.strictEqual(systemContext.includes('## State Tracking Reference'), false, label);
+  assert.strictEqual(occurrences(systemContext, '## Author Notes'), 1, label);
+  assert.strictEqual(occurrences(systemContext, '## State Tracking Reference'), 1, label);
+}
+
+function occurrences(text, needle) {
+  let count = 0;
+  let from = 0;
+  while (from <= text.length) {
+    const at = text.indexOf(needle, from);
+    if (at === -1) return count;
+    count += 1;
+    from = at + needle.length;
+  }
+  return count;
 }
 
 function assertSavedGame(session, turn) {
