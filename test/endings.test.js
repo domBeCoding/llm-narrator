@@ -37,7 +37,7 @@ const ACT_1 = [
 
 const ACT_2_ROUTES = {
   halden_reconciled: [
-    { story: { plot_beats_hit: ['halden_encounter'], flags: { reader_left_apothecary: true, halden_encountered: true } }, reader: { location: 'haldens_cottage' }, characters: { halden: { disposition: 'curt, dismissive' } } },
+    { story: { plot_beats_hit: ['halden_encounter'], flags: { reader_left_apothecary: true, halden_encountered: true, halden_agreed_to_help: true } }, reader: { location: 'haldens_cottage' }, characters: { halden: { disposition: 'curt, dismissive' } } },
     { story: { plot_beats_hit: ['enter_forest'], flags: { forest_entered: true } }, reader: { location: 'greymere_forest' }, world: { village_awareness: { forest_activity: 'someone_entered' } } },
     { story: { plot_beats_hit: ['obtain_moonpetal'], flags: { moonpetal_obtained: true } }, reader: { inventory: ['basic herb kit', 'moonpetal'] } },
   ],
@@ -224,15 +224,9 @@ test('playthrough: a mixed Halden and Tomas route matches both of their endings,
   assert.deepStrictEqual(session.session.ending_variant, ['halden_reconciled', 'tomas_helped']);
 });
 
-// End conditions only check flags and character fields, and no flag tells
-// "Halden is helping" apart from "Halden turned the reader away". So if the AI
-// sets Elara to recovering on the Halden path before the reunion, the engine
-// ends the story at once, and on conditions alone only halden_turned_away
-// matches. That is not the intended story outcome: the system prompt tells the
-// AI not to use halden_turned_away when Halden helped, and to write the reunion
-// into the closing scene instead. This test records both halves: what the
-// engine does, and that the redirecting guidance reaches the final-turn prompt.
-test('playthrough: on the Halden path, recovery before the reunion ends early and the prompt redirects the AI to the reunion', async () => {
+// Halden agreed to help, so the ending waits for the reunion even if Elara
+// is already recovering. The next reply reports the reunion and reconciles her.
+test('playthrough: on the Halden path, recovery before the reunion does not end the story', async () => {
   const storyManager = await loadStory();
   const config = storyManager.getStory('the-herbalists-choice').config;
   const svc = new NarrationService(storyManager, 'key', { llmClient: { call: async () => '' } });
@@ -242,24 +236,26 @@ test('playthrough: on the Halden path, recovery before the reunion ends early an
     characters: { elara: { health: 'recovering', consciousness: 'awake', disposition: 'calm, grateful' } },
     reader: { location: 'apothecary' },
   };
-  // The reunion would have come in the next reply, but the bot moves the
-  // session to concluding as soon as the end conditions are met.
-  const replies = [{}, ...ACT_1, ...ACT_2_ROUTES.halden_reconciled, recoveryFirst];
-  const { session, warnings, endedAtTurn } = play(svc, config, replies);
+  const reunion = {
+    story: { plot_beats_hit: ['halden_elara_reunion'], flags: { halden_reconciled: true } },
+  };
+  const beforeReunion = [{}, ...ACT_1, ...ACT_2_ROUTES.halden_reconciled, recoveryFirst];
+  const early = play(svc, config, beforeReunion);
 
-  // What the engine does.
-  assert.deepStrictEqual(warnings, []);
-  assert.strictEqual(endedAtTurn, replies.length, 'the story ends on the recovery reply, before the reunion');
-  assert.strictEqual(session.story.flags.halden_encountered, true);
-  assert.strictEqual(session.story.flags.halden_reconciled, false);
-  assert.ok(!session.story.plot_beats_hit.includes('halden_elara_reunion'));
-  assert.deepStrictEqual(matchingVariants(session, config), ['halden_turned_away'], 'conditions alone match turned away');
-  assert.deepStrictEqual(session.session.ending_variant, ['halden_turned_away'], 'the known case is recorded as turned away');
+  assert.deepStrictEqual(early.warnings, []);
+  assert.strictEqual(early.endedAtTurn, null, 'recovery alone does not conclude the story');
+  assert.strictEqual(early.session.session.ending_variant, null, 'no ending is recorded before the reunion');
+  assert.strictEqual(early.session.story.flags.halden_agreed_to_help, true);
+  assert.strictEqual(early.session.story.flags.halden_encountered, true);
+  assert.strictEqual(early.session.story.flags.halden_reconciled, false);
+  assert.strictEqual(early.session.characters.elara.health, 'recovering');
+  assert.ok(!early.session.story.plot_beats_hit.includes('halden_elara_reunion'));
 
-  // What the AI is told on the final turn: Halden helped, so not turned away.
-  session.session.status = 'concluding';
-  const { systemContext, userMessage } = svc.buildPrompt(session, 'I sit with Elara');
-  assert.match(userMessage, /FINAL TURN/);
-  assert.match(systemContext, /if the story is ending and Halden helped the reader but the reunion has not happened, do not use `halden_turned_away`/);
-  assert.match(systemContext, /write the reunion of Halden and Elara into the closing scene instead/);
+  const full = play(svc, config, [...beforeReunion, reunion]);
+  assert.deepStrictEqual(full.warnings, []);
+  assert.strictEqual(full.endedAtTurn, beforeReunion.length + 1, 'the story ends on the reunion reply');
+  assert.ok(full.session.story.plot_beats_hit.includes('halden_elara_reunion'));
+  assert.strictEqual(full.session.story.flags.halden_reconciled, true);
+  assert.deepStrictEqual(matchingVariants(full.session, config), ['halden_reconciled']);
+  assert.deepStrictEqual(full.session.session.ending_variant, ['halden_reconciled']);
 });

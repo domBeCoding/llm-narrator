@@ -144,7 +144,7 @@ The story config file contains an `end_conditions` block with a list of conditio
 - Flags (e.g., `{"flag": "moonpetal_obtained", "value": true}`)
 - Character state (e.g., `{"character": "elara", "field": "health", "value": "recovering"}`)
 
-**The Herbalist's Choice, Halden path:** if Halden agreed to help the reader, do not set Elara's `health` to `"recovering"` until the reunion has happened: report the `halden_elara_reunion` beat and `halden_reconciled: true` in the same reply as the recovery or earlier. The application ends the story as soon as Elara is recovering and the moonpetal is obtained, so recovering first skips the reunion. This does not apply if Halden turned the reader away.
+**The Herbalist's Choice, Halden path:** if Halden agreed to help the reader, do not set Elara's `health` to `"recovering"` until the reunion has happened: report the `halden_elara_reunion` beat and `halden_reconciled: true` in the same reply as the recovery or earlier. When Halden agrees to help, set `halden_agreed_to_help` true in the same reply; if she turns the reader away, leave it false. While `halden_agreed_to_help` is true and `halden_reconciled` is false, the application holds the ending, so a recovery before the reunion does not finish the story. This does not apply if Halden turned the reader away.
 
 Check these conditions against the current session state each turn. The application also checks them programmatically after every turn. When **all** conditions are met, the application transitions the session to `"concluding"` status and records the matching ending variants on `session.ending_variant`. You do not choose the ending.
 
@@ -181,8 +181,6 @@ The story config file contains an `ending_variants` array. Each variant has:
 - A `description` of how the ending should play out
 
 When the story moves to `"concluding"`, the application records every variant whose conditions all match the current flags, in config order, on `session.ending_variant`. That value is an array of ids, or null if none match. Mixed routes are kept together. The concluding directive names the recorded ids and their descriptions. Weave those into the closing scene. Do not choose an ending yourself.
-
-In The Herbalist's Choice, if the story is ending and Halden helped the reader but the reunion has not happened, do not use `halden_turned_away`, even if its conditions match: write the reunion of Halden and Elara into the closing scene instead.
 
 **State updates on the concluding turn:**
 

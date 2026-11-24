@@ -95,6 +95,8 @@ test('system prompt: on the Halden path Elara must not recover before the reunio
   assert.match(line, /do not set Elara's `health` to `"recovering"` until the reunion/);
   assert.match(line, /halden_elara_reunion/);
   assert.match(line, /halden_reconciled: true/);
+  assert.match(line, /set `halden_agreed_to_help` true in the same reply/);
+  assert.match(line, /if she turns the reader away, leave it false/);
 });
 
 // Phase conditions are not evaluated by the code; the whole config is sent to

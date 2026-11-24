@@ -42,7 +42,11 @@ function reasonFor(rejected, p) {
 
 test('story config: end conditions and character phases only use allowed values', () => {
   const rules = config.state_rules.character_fields;
-  for (const cond of config.end_conditions.all_required) {
+  const endConditions = [
+    ...config.end_conditions.all_required,
+    ...(config.end_conditions.hold_while || []).flat(),
+  ];
+  for (const cond of endConditions) {
     if (cond.character) assert.ok(rules[cond.field].includes(cond.value), `${cond.field}=${cond.value}`);
     if (cond.flag) assert.ok(cond.flag in config.flags, cond.flag);
   }

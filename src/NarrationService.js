@@ -131,11 +131,14 @@ class NarrationService {
     return { ...state, session: meta };
   }
 
+  // all_required must all match. hold_while, when present, is a list of
+  // groups in the same shape. If every condition in any group matches, the
+  // story is not over yet. A config with no hold_while ends as before.
   evaluateEndConditions(session, config) {
     if (!config || !config.end_conditions || !config.end_conditions.all_required) {
       return false;
     }
-    return config.end_conditions.all_required.every(cond => {
+    const met = (cond) => {
       if (cond.flag) {
         return session.story.flags[cond.flag] === cond.value;
       }
@@ -144,7 +147,13 @@ class NarrationService {
           session.characters[cond.character][cond.field] === cond.value;
       }
       return false;
-    });
+    };
+    if (!config.end_conditions.all_required.every(met)) return false;
+    const holdWhile = config.end_conditions.hold_while;
+    if (Array.isArray(holdWhile) && holdWhile.some(group => Array.isArray(group) && group.length > 0 && group.every(met))) {
+      return false;
+    }
+    return true;
   }
 
   // Every variant whose conditions all match, in config order. The same rule
