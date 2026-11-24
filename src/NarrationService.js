@@ -26,9 +26,11 @@ const RECAP_STATE_LINE = 'Current flags, plot beats and secrets are in the Curre
 // maximum, and the three dots of a clip count toward it.
 const NARRATION_EXCERPT_MAX = 200;
 const NARRATION_ELLIPSIS = '...';
-// The first sentence runs through the first `.`, `!` or `?`. A closing quote
-// or bracket may sit against that mark. With no mark, the whole text is used.
-const FIRST_SENTENCE = /^[\s\S]+?[.!?]+(?=(?:["')\]]+)?(?:\s|$))/;
+// The first sentence runs through the first `.`, `!` or `?`. The period in
+// Mr., Mrs., Ms., Dr. and St. does not end it. A closing quote or bracket
+// straight after that mark is kept: straight and curly quotes, ) and ].
+// With no mark, the whole text is used.
+const FIRST_SENTENCE = /^[\s\S]+?(?:(?:(?<!\b(?:Mr|Mrs|Ms|Dr|St))\.)|[!?])[.!?]*["'\u201C\u201D\u2018\u2019)\]]*(?=\s|$)/;
 
 // A flag that is absent or undefined counts as false, so an old save that
 // never stored the key still meets a condition expecting false. A condition
