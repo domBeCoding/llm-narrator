@@ -482,8 +482,12 @@ function narrationExcerpt(content) {
   const matched = text.match(FIRST_SENTENCE);
   const sentence = (matched ? matched[0] : text).trim();
   if (sentence === '') return null;
-  if (sentence.length <= NARRATION_EXCERPT_MAX) return sentence;
-  return sentence.slice(0, NARRATION_EXCERPT_MAX - NARRATION_ELLIPSIS.length) + NARRATION_ELLIPSIS;
+  // Count by code point, as tidyReaderName does, so a character on the cut
+  // is kept or dropped whole. The ellipsis counts toward the 200. Do not
+  // trim after the cut: this is an excerpt, not a name.
+  const points = Array.from(sentence);
+  if (points.length <= NARRATION_EXCERPT_MAX) return sentence;
+  return points.slice(0, NARRATION_EXCERPT_MAX - NARRATION_ELLIPSIS.length).join('') + NARRATION_ELLIPSIS;
 }
 
 // Narration lines for cut turns 1..cutTurns, keyed by that turn number.
