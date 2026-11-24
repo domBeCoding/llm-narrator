@@ -208,7 +208,7 @@ test('createSession: does not mutate the template on disk', async (t) => {
   assert.strictEqual(JSON.parse(raw).session.session_id, null);
 });
 
-test('BUG: createSession ignores the username it is given', async (t) => {
+test('createSession: stores the given name on both reader fields', async (t) => {
   const { dir, manager } = await makeManager(t);
 
   const { session } = await manager.createSession('42', 'dom', 'the-herbalists-choice');
@@ -238,6 +238,68 @@ test('createSession: a blank username keeps Wren on both fields', async (t) => {
   assert.strictEqual(savedEmpty.reader.name, 'Wren');
   assert.strictEqual(savedSpaces.session.reader_name, 'Wren');
   assert.strictEqual(savedSpaces.reader.name, 'Wren');
+});
+
+test('createSession: newlines in a name become a single space', async (t) => {
+  const { dir, manager } = await makeManager(t);
+
+  const { session } = await manager.createSession('42', '  Ada \n\n Lovelace \r\n', 'the-herbalists-choice');
+
+  assert.strictEqual(session.session.reader_name, 'Ada Lovelace');
+  assert.strictEqual(session.reader.name, 'Ada Lovelace');
+
+  const saved = JSON.parse(await fs.readFile(path.join(dir, 'session-42-1.json'), 'utf8'));
+  assert.strictEqual(saved.session.reader_name, 'Ada Lovelace');
+  assert.strictEqual(saved.reader.name, 'Ada Lovelace');
+});
+
+test('createSession: control characters in a name become a single space', async (t) => {
+  const { dir, manager } = await makeManager(t);
+
+  const { session } = await manager.createSession('42', 'Ada\u0000\u0007Lovelace\t\tReed', 'the-herbalists-choice');
+
+  assert.strictEqual(session.session.reader_name, 'Ada Lovelace Reed');
+  assert.strictEqual(session.reader.name, 'Ada Lovelace Reed');
+
+  const saved = JSON.parse(await fs.readFile(path.join(dir, 'session-42-1.json'), 'utf8'));
+  assert.strictEqual(saved.session.reader_name, 'Ada Lovelace Reed');
+  assert.strictEqual(saved.reader.name, 'Ada Lovelace Reed');
+});
+
+test('createSession: a name is capped at 32 characters', async (t) => {
+  const { dir, manager } = await makeManager(t);
+
+  const exact = await manager.createSession('42', 'a'.repeat(32), 'the-herbalists-choice');
+  assert.strictEqual(exact.session.session.reader_name, 'a'.repeat(32));
+  assert.strictEqual(exact.session.reader.name, 'a'.repeat(32));
+
+  const longer = await manager.createSession('42', 'b'.repeat(40), 'the-herbalists-choice');
+  assert.strictEqual(longer.session.session.reader_name, 'b'.repeat(32));
+  assert.strictEqual(longer.session.reader.name, 'b'.repeat(32));
+
+  // The cut can land on the space that was left after collapsing whitespace.
+  const trimmed = await manager.createSession('42', `${'c'.repeat(31)} extra-tail`, 'the-herbalists-choice');
+  assert.strictEqual(trimmed.session.session.reader_name, 'c'.repeat(31));
+  assert.strictEqual(trimmed.session.reader.name, 'c'.repeat(31));
+
+  const saved = JSON.parse(await fs.readFile(path.join(dir, 'session-42-3.json'), 'utf8'));
+  assert.strictEqual(saved.session.reader_name, 'c'.repeat(31));
+  assert.strictEqual(saved.reader.name, 'c'.repeat(31));
+});
+
+test('createSession: a name that tidies to nothing keeps Wren', async (t) => {
+  const { dir, manager } = await makeManager(t);
+  const blanks = ['\u0000', '\n\t\u0001', '\u007F\u009F', null, undefined, 12];
+
+  for (const [index, value] of blanks.entries()) {
+    const { session } = await manager.createSession('42', value, 'the-herbalists-choice');
+    assert.strictEqual(session.session.reader_name, 'Wren', `value ${index}`);
+    assert.strictEqual(session.reader.name, 'Wren', `value ${index}`);
+
+    const saved = JSON.parse(await fs.readFile(path.join(dir, `session-42-${index + 1}.json`), 'utf8'));
+    assert.strictEqual(saved.session.reader_name, 'Wren', `value ${index}`);
+    assert.strictEqual(saved.reader.name, 'Wren', `value ${index}`);
+  }
 });
 
 test('createSession: leaves the shipped template file unchanged', async (t) => {

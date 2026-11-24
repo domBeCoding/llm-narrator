@@ -345,6 +345,43 @@ test('an active story moves to concluding once the end conditions are met', asyn
   assert.deepStrictEqual(recordedEndings, ['session-42-1']);
 });
 
+test('a new game uses the display name, then the global name, then the username', async (t) => {
+  const { bot, readSaved } = await makeBot(t, { sessions: [] });
+
+  const withDisplay = fakeButton('start_story_the-herbalists-choice');
+  withDisplay.member = { displayName: 'Guild Wren' };
+  withDisplay.user = { id: USER_ID, globalName: 'Global Wren', username: 'reader' };
+
+  const directMessage = fakeButton('start_story_the-herbalists-choice');
+  directMessage.member = null;
+  directMessage.user = { id: USER_ID, globalName: 'Global Wren', username: 'reader' };
+
+  const usernameOnly = fakeButton('start_story_the-herbalists-choice');
+  delete usernameOnly.member;
+  usernameOnly.user = { id: USER_ID, username: 'reader' };
+
+  const emptyDisplay = fakeButton('start_story_the-herbalists-choice');
+  emptyDisplay.member = { displayName: '' };
+  emptyDisplay.user = { id: USER_ID, globalName: 'Global Wren', username: 'reader' };
+
+  await bot.handleButtonInteraction(withDisplay);
+  await bot.handleButtonInteraction(directMessage);
+  await bot.handleButtonInteraction(usernameOnly);
+  await bot.handleButtonInteraction(emptyDisplay);
+
+  const names = [];
+  for (const n of [1, 2, 3, 4]) {
+    const saved = await readSaved(n);
+    names.push([saved.session.reader_name, saved.reader.name]);
+  }
+  assert.deepStrictEqual(names, [
+    ['Guild Wren', 'Guild Wren'],
+    ['Global Wren', 'Global Wren'],
+    ['reader', 'reader'],
+    ['Global Wren', 'Global Wren'],
+  ]);
+});
+
 test('an opening that meets the end conditions records the ending', async (t) => {
   const { bot, readSaved, recordedEndings } = await makeBot(t, { sessions: [], endConditionsMet: true });
 

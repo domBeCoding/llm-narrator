@@ -3,6 +3,19 @@ const path = require('path');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 
+// Control characters, including newlines and tabs, become spaces. The result
+// is a single trimmed line of at most 32 characters. Nothing left means the
+// caller should keep the template name.
+function tidyReaderName(username) {
+  if (typeof username !== 'string') return '';
+  return username
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 32)
+    .trim();
+}
+
 /** session-<userId>-<n>.json, and not a temp or any other stray file. */
 function sessionFilePattern(userId) {
   const escaped = String(userId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -173,14 +186,12 @@ class SessionManager {
     session.session.started_at = new Date().toISOString();
     session.session.last_action_at = new Date().toISOString();
 
-    // A new session takes the given name only when it is a non-blank string.
-    // Missing, non-string, and blank values keep both template names.
-    if (typeof username === 'string') {
-      const name = username.trim();
-      if (name) {
-        session.session.reader_name = name;
-        session.reader.name = name;
-      }
+    // A new session takes the given name only when tidying leaves something.
+    // Missing, non-string, and blank values keep both template names (Wren).
+    const name = tidyReaderName(username);
+    if (name) {
+      session.session.reader_name = name;
+      session.reader.name = name;
     }
 
     await this.saveSession(userId, sessionNumber, session);
