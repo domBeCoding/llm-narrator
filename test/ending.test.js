@@ -247,6 +247,39 @@ test('matchEndingVariants: turned away, with no Tomas or Corwin, matches only ha
   assert.deepStrictEqual(svc.matchEndingVariants(session, real), ['halden_turned_away']);
 });
 
+test('matchEndingVariants: a missing halden_agreed_to_help counts as false and matches halden_turned_away', () => {
+  const svc = makeService();
+  const real = require('../stories/the-herbalists-choice-config.json');
+
+  function turnedAway(extra) {
+    const session = makeSession();
+    Object.assign(session.story.flags, {
+      moonpetal_obtained: true,
+      halden_encountered: true,
+      halden_reconciled: false,
+      tomas_involved: false,
+      corwin_involvement: false,
+    }, extra);
+    session.characters.elara.health = 'recovering';
+    return session;
+  }
+
+  const missing = turnedAway();
+  delete missing.story.flags.halden_agreed_to_help;
+  assert.strictEqual('halden_agreed_to_help' in missing.story.flags, false);
+  assert.deepStrictEqual(svc.matchEndingVariants(missing, real), ['halden_turned_away']);
+  assert.strictEqual(svc.evaluateEndConditions(missing, real), true, 'the hold does not apply when the key is absent');
+  svc.recordEnding(missing, real);
+  assert.deepStrictEqual(missing.session.ending_variant, ['halden_turned_away']);
+
+  const unset = turnedAway({ halden_agreed_to_help: undefined });
+  assert.deepStrictEqual(svc.matchEndingVariants(unset, real), ['halden_turned_away']);
+
+  assert.strictEqual(svc.evaluateEndConditions(missing, {
+    end_conditions: { all_required: [{ flag: 'halden_agreed_to_help', value: true }] },
+  }), false, 'a missing flag still fails a condition that expects true');
+});
+
 // --- buildPrompt concluding directive ---------------------------------------
 
 test('buildPrompt: does not include ending directive when status is active', () => {

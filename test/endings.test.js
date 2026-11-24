@@ -103,9 +103,10 @@ function matchingVariants(session, config) {
     .map(variant => variant.id);
 }
 
-function play(svc, config, replies) {
+function play(svc, config, replies, prepare) {
   const session = JSON.parse(JSON.stringify(template));
   session.session.session_id = 'session-1-1';
+  if (prepare) prepare(session);
   const warnings = [];
   const originalWarn = console.warn;
   console.warn = (message) => warnings.push(message);
@@ -258,4 +259,26 @@ test('playthrough: on the Halden path, recovery before the reunion does not end 
   assert.strictEqual(full.session.story.flags.halden_reconciled, true);
   assert.deepStrictEqual(matchingVariants(full.session, config), ['halden_reconciled']);
   assert.deepStrictEqual(full.session.session.ending_variant, ['halden_reconciled']);
+});
+
+// Saves from before the flag existed have no halden_agreed_to_help key.
+// That still counts as turned away, and recovery is not held.
+test('playthrough: an old turned-away save with no halden_agreed_to_help key records that ending', async () => {
+  const storyManager = await loadStory();
+  const config = storyManager.getStory('the-herbalists-choice').config;
+  const svc = new NarrationService(storyManager, 'key', { llmClient: { call: async () => '' } });
+
+  const replies = [{}, ...ACT_1, ...ACT_2_ROUTES.halden_turned_away, ...ACT_3];
+  const { session, warnings, endedAtTurn } = play(svc, config, replies, (current) => {
+    delete current.story.flags.halden_agreed_to_help;
+  });
+
+  assert.deepStrictEqual(warnings, []);
+  assert.strictEqual('halden_agreed_to_help' in session.story.flags, false);
+  assert.strictEqual(session.story.flags.halden_encountered, true);
+  assert.strictEqual(session.story.flags.halden_reconciled, false);
+  assert.strictEqual(endedAtTurn, replies.length, 'recovery still ends the story when the key is absent');
+  assert.strictEqual(svc.evaluateEndConditions(session, config), true);
+  assert.deepStrictEqual(svc.matchEndingVariants(session, config), ['halden_turned_away']);
+  assert.deepStrictEqual(session.session.ending_variant, ['halden_turned_away']);
 });
