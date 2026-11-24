@@ -49,6 +49,9 @@ class NarrationService {
       retryDelayMs: options.retryDelayMs,
       sleep: options.sleep,
     });
+    // Optional clock for tests. A function or a millisecond timestamp.
+    // Absent means Date.now, read when the prompt is built.
+    this.now = options.now;
   }
 
   get apiKey() {
@@ -61,7 +64,7 @@ class NarrationService {
     }
   }
 
-  buildPrompt(session, userAction) {
+  buildPrompt(session, userAction, options) {
     const story = this.storyManager.getStory(session.session.story_id);
     const stateSummary = JSON.stringify(this.stateForPrompt(session), null, 2);
 
@@ -82,7 +85,13 @@ class NarrationService {
 
     const systemContext = `${NARRATOR_SYSTEM}\n\n${this.storyManager.getSystemPrompt()}\n\n---\n\n## Story Context\n\n${storyText}\n\n---\n\n## Story Config (Mechanical Rules)\n\n\`\`\`json\n${JSON.stringify(story.config, null, 2)}\n\`\`\``;
 
-    const userMessage = `## Current Session State\n\n\`\`\`json\n${stateSummary}\n\`\`\`\n\n---\n\n## Reader's Action\n\n${userAction}${concludingDirective}\n\n---\n\n${TURN_INSTRUCTION}`;
+    // Only the current user message. History, the recap and the system
+    // message stay as they are, and so does TURN_INSTRUCTION.
+    const nowSource = options && options.now != null ? options.now : this.now;
+    const minutesLine = minutesSinceLastActionLine(session, resolveNowMs(nowSource));
+    const readerAction = minutesLine == null ? userAction : `${userAction}\n${minutesLine}`;
+
+    const userMessage = `## Current Session State\n\n\`\`\`json\n${stateSummary}\n\`\`\`\n\n---\n\n## Reader's Action\n\n${readerAction}${concludingDirective}\n\n---\n\n${TURN_INSTRUCTION}`;
 
     return { systemContext, userMessage, history: this.historyForPrompt(session) };
   }
@@ -340,6 +349,35 @@ class NarrationService {
     for (const entry of entries) {
       session.choice_history.push({ ...entry, turn: session.session.turn_count });
     }
+  }
+}
+
+// Whole minutes from the previous last_action_at to now. That field is still
+// the previous message's time here: applyStateUpdates stamps it before this
+// turn is applied. A missing or invalid timestamp leaves the line out.
+function minutesSinceLastActionLine(session, nowMs) {
+  if (typeof nowMs !== 'number' || !Number.isFinite(nowMs)) return null;
+  const raw = session && session.session ? session.session.last_action_at : null;
+  if (typeof raw !== 'string' || raw.trim() === '') return null;
+  const then = Date.parse(raw);
+  if (!Number.isFinite(then)) return null;
+  const minutes = Math.floor((nowMs - then) / 60000);
+  if (!Number.isFinite(minutes)) return null;
+  return `Minutes since the last action: ${minutes < 0 ? 0 : minutes}`;
+}
+
+function resolveNowMs(now) {
+  if (now == null) return Date.now();
+  try {
+    const value = typeof now === 'function' ? now() : now;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (value instanceof Date) {
+      const ms = value.getTime();
+      return Number.isFinite(ms) ? ms : null;
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
