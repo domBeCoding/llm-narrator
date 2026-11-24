@@ -152,3 +152,47 @@ test('buildPrompt: uses session.story.current_act when building systemContext', 
     { storyId: 'the-herbalists-choice', actNumber: 3 },
   ]);
 });
+
+function sectionAfter(text, heading, until) {
+  const start = text.indexOf(heading);
+  assert.notStrictEqual(start, -1, `missing heading: ${heading}`);
+  const from = start + heading.length;
+  const end = text.indexOf(until, from);
+  assert.notStrictEqual(end, -1, `missing end marker after ${heading}: ${until}`);
+  return text.slice(from, end);
+}
+
+function listsWord(text, word) {
+  return new RegExp(`(?:^|[^A-Za-z])${word}(?:[^A-Za-z]|$)`, 'i').test(text);
+}
+
+test('system prompt: a short yes or no answers the story, and yes after a healthcheck still resumes', () => {
+  const examples = sectionAfter(
+    prompt,
+    '### Non-Game Messages (Healthchecks)',
+    '**Do not treat these as game actions.**'
+  );
+  for (const word of ['yes', 'no', 'ok', 'okay', 'yeah', 'nope']) {
+    assert.strictEqual(listsWord(examples, word), false, `healthcheck examples still list ${word}`);
+  }
+  assert.match(examples, /"hey", "hi"/);
+  assert.match(examples, /"are you there"/);
+  assert.match(examples, /"ping"/);
+  assert.match(examples, /"what's up"/);
+
+  const rule = sectionAfter(prompt, '### Short Answers', '### Resuming After a Healthcheck');
+  assert.ok(prompt.indexOf('## Error Handling') < prompt.indexOf('### Short Answers'));
+  assert.match(rule, /short answer such as "yes", "no", "ok", "yeah" or "nope"/);
+  assert.match(rule, /asked a question or offered choices/);
+  assert.match(rule, /is a story action, so advance the story as usual/);
+  assert.match(rule, /Treat greetings and presence checks as healthchecks/);
+  assert.match(rule, /clarification reply \(one with no state block\)/);
+  assert.match(rule, /"yes", "continue", "resume"/);
+  assert.match(rule, /call `get_last_narration` and do not write a new scene/);
+
+  const resume = sectionAfter(prompt, '### Resuming After a Healthcheck', '\n## ');
+  assert.match(resume, /resume the game after a healthcheck/);
+  assert.match(resume, /they say "yes", "continue"/);
+  assert.match(resume, /do not generate new narration/);
+  assert.match(resume, /call the `get_last_narration` tool/);
+});

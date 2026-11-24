@@ -113,6 +113,80 @@ test('buildPrompt: systemContext is static (does not contain session state or ac
   assert.doesNotMatch(systemContext, /## Current Session State/);
 });
 
+test('buildPrompt: states whole minutes since the previous action in the reader action only', () => {
+  const last = Date.parse('2020-01-01T00:00:00.000Z');
+  const fiveMinutes = last + 5 * 60 * 1000;
+  const svc = new NarrationService(makeStoryManagerStub(), 'key', { now: () => fiveMinutes });
+  const session = makeSession();
+  session.conversation_history = [
+    { role: 'user', content: 'I look around' },
+    { role: 'assistant', content: 'The shelves are full.' },
+  ];
+  const savedHistory = JSON.stringify(session.conversation_history);
+
+  const { systemContext, userMessage, history } = svc.buildPrompt(session, 'no');
+  const actionStart = userMessage.indexOf('## Reader\'s Action\n\n');
+  const actionEnd = userMessage.indexOf('\n---\n', actionStart);
+  assert.strictEqual(
+    userMessage.slice(actionStart, actionEnd),
+    '## Reader\'s Action\n\nno\nMinutes since the last action: 5\n'
+  );
+  assert.doesNotMatch(userMessage.slice(0, actionStart), /Minutes since the last action/);
+  assert.doesNotMatch(systemContext, /Minutes since the last action/);
+  assert.doesNotMatch(userMessage.slice(userMessage.lastIndexOf('\n---\n')), /Minutes since the last action/);
+  assert.strictEqual(JSON.stringify(session.conversation_history), savedHistory);
+  assert.deepStrictEqual(history, [
+    { role: 'user', content: 'I look around' },
+    { role: 'assistant', content: 'The shelves are full.' },
+  ]);
+
+  const later = svc.buildPrompt(session, 'no', { now: last + (5 * 60 + 59) * 1000 });
+  assert.match(later.userMessage, /Minutes since the last action: 5/);
+  assert.strictEqual(later.systemContext, systemContext);
+  assert.strictEqual(
+    later.userMessage.slice(later.userMessage.lastIndexOf('\n---\n')),
+    userMessage.slice(userMessage.lastIndexOf('\n---\n'))
+  );
+
+  const concluding = makeSession({ session: { status: 'concluding' } });
+  const ending = svc.buildPrompt(concluding, 'no', { now: fiveMinutes });
+  const endingStart = ending.userMessage.indexOf('## Reader\'s Action\n\n');
+  const endingAction = ending.userMessage.slice(
+    endingStart,
+    ending.userMessage.indexOf('\n---\n', endingStart)
+  );
+  assert.strictEqual(endingAction, '## Reader\'s Action\n\nno\nMinutes since the last action: 5\n');
+});
+
+test('buildPrompt: omits minutes when the previous action time is missing or invalid', () => {
+  const now = Date.parse('2020-01-01T00:05:00.000Z');
+  const svc = new NarrationService(makeStoryManagerStub(), 'key', { now });
+
+  const missing = makeSession({ session: { last_action_at: null } });
+  let missingPrompt;
+  assert.doesNotThrow(() => {
+    missingPrompt = svc.buildPrompt(missing, 'yes');
+  });
+  assert.doesNotMatch(missingPrompt.userMessage, /Minutes since the last action/);
+  assert.match(missingPrompt.userMessage, /## Reader's Action\n\nyes\n\n---/);
+
+  const blank = makeSession({ session: { last_action_at: '  ' } });
+  assert.doesNotMatch(svc.buildPrompt(blank, 'yes').userMessage, /Minutes since the last action/);
+
+  const invalid = makeSession({ session: { last_action_at: 'not-a-timestamp' } });
+  assert.doesNotThrow(() => svc.buildPrompt(invalid, 'yes'));
+  assert.doesNotMatch(svc.buildPrompt(invalid, 'yes').userMessage, /Minutes since the last action/);
+
+  const future = makeSession({ session: { last_action_at: '2020-01-01T00:10:00.000Z' } });
+  assert.match(svc.buildPrompt(future, 'yes').userMessage, /Minutes since the last action: 0/);
+
+  const brokenClock = new NarrationService(makeStoryManagerStub(), 'key', {
+    now: () => { throw new Error('clock failed'); },
+  });
+  assert.doesNotThrow(() => brokenClock.buildPrompt(makeSession(), 'yes'));
+  assert.doesNotMatch(brokenClock.buildPrompt(makeSession(), 'yes').userMessage, /Minutes since the last action/);
+});
+
 // --- parseResponse -----------------------------------------------------------
 
 test('parseResponse: splits narration from the trailing JSON block', () => {
